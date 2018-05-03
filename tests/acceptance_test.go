@@ -541,6 +541,23 @@ func TestSingleNode(t *testing.T) {
 		}
 	})
 
+	t.Run("UnmountDot", func(t *testing.T) {
+		fsname := citools.UniqName()
+
+		// mount a created dot on a local path
+		citools.RunOnNode(t, node1, "dm mount --create "+fsname+" /tmp/mounted-"+fsname)
+
+		// write data to the local dot path
+		citools.RunOnNode(t, node1, "sh -c 'echo hello > /tmp/mounted-"+fsname+"/file.txt'")
+
+		// unmount the dot
+		citools.RunOnNode(t, node1, "dm unmount /tmp/mounted-"+fsname)
+
+		if _, err := os.Stat("/tmp/mounted-" + fsname + "/file.txt"); err == nil {
+			t.Errorf("Expected %s to not exist after unmount but it does exist", "/tmp/mounted-"+fsname+"/file.txt")
+		}
+	})
+
 	t.Run("ApiKeys", func(t *testing.T) {
 		apiKey := f[0].GetNode(0).ApiKey
 		password := f[0].GetNode(0).Password

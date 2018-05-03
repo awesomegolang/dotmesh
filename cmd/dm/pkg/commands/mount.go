@@ -36,6 +36,26 @@ NOTE: this currently only works for Linux.`,
 	return cmd
 }
 
+func NewCmdUnmount(out io.Writer) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "unmount <mountpoint>",
+		Short: "Unmount a dot from the local filesystem.",
+		Long: `Unmounts a dot's filesystem from a given location on your host.
+
+NOTE: this currently only works for Linux.`,
+
+		Run: func(cmd *cobra.Command, args []string) {
+			err := unmountDot(cmd, args, out)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, err.Error())
+				os.Exit(1)
+			}
+		},
+	}
+
+	return cmd
+}
+
 func mountDot(cmd *cobra.Command, args []string, out io.Writer) error {
 	dm, err := remotes.NewDotmeshAPI(configPath)
 	if err != nil {
@@ -79,6 +99,32 @@ If you want to create it - use the '--create' flag`, localDot)
 	}
 
 	fmt.Fprintf(out, "symlinked dot: %s/%s from %s to %s\n", namespace, dot, localDotPath, mountpoint)
+
+	return nil
+}
+
+func unmountDot(cmd *cobra.Command, args []string, out io.Writer) error {
+	var mountpoint string
+	if len(args) == 1 {
+		mountpoint = args[0]
+	} else {
+		return fmt.Errorf("Please specify <mountpoint> as arguments.")
+	}
+
+	_, err := os.Stat(mountpoint)
+
+	if os.IsNotExist(err) {
+		return fmt.Errorf("Mountpoint %s does not exist.", mountpoint)
+	}
+
+	fmt.Fprintf(out, "unmounting: %s\n", mountpoint)
+
+	err = os.Remove(mountpoint)
+	if err != nil {
+		return err
+	}
+
+	fmt.Fprintf(out, "unmounted: %s\n", mountpoint)
 
 	return nil
 }
