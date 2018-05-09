@@ -9,7 +9,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var runDataVolumes *[]string
+var runInputDots *[]string
+var runOutputDots *[]string
+var runModelDot string
+var runWorkDir string
 
 func NewCmdRun(out io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
@@ -26,13 +29,30 @@ func NewCmdRun(out io.Writer) *cobra.Command {
 		},
 	}
 
-	runDataVolumes = cmd.PersistentFlags().StringSliceP("data", "d", []string{},
-		"Specify the data dots used for a job run command.")
+	runInputDots = cmd.Flags().StringSliceP("input-dot", "i", []string{},
+		"Specify the input data dots to be mounted in the workdir.")
+
+	runOutputDots = cmd.Flags().StringSliceP("output-dot", "o", []string{},
+		"Specify the output data dots to be mounted in the workdir.")
+
+	cmd.Flags().StringVarP(
+		&runModelDot, "model-dot", "m", "",
+		"Specify the model dot that has the code for this run.",
+	)
+
+	cmd.Flags().StringVarP(
+		&runWorkDir, "workdir", "w", "/work",
+		"Specify the path used to mount the input, output and model dots.",
+	)
 
 	return cmd
 }
 
 func runJob(cmd *cobra.Command, args []string, out io.Writer) error {
-	fmt.Fprintf(out, "params %+v -- %+v\n", args, runDataVolumes)
+	fmt.Fprintf(out, "args %+v\n", args)
+	fmt.Fprintf(out, "runInputDots %+v\n", runInputDots)
+	fmt.Fprintf(out, "runOutputDots %+v\n", runOutputDots)
+	fmt.Fprintf(out, "runModelDot %+v\n", runModelDot)
+	fmt.Fprintf(out, "runDataDir %+v\n", runWorkDir)
 	return nil
 }
