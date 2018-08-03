@@ -1148,7 +1148,18 @@ func clusterInit(cmd *cobra.Command, args []string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("got URL:\n%s\n", string(body))
+
+	// always use discoveryUrl to speak back to the discovery server
+	// this is for when we are contacting the discovery service from inside
+	// dind clusters with custom DIND_SUBNETS that are not 10.192.0.0
+
+	// e.g. http://10.192.72.1:8087/new?size=3 returns http://10.192.0.1:8087/92406a7192e042d19f0f866a4337289e
+	// we turn that into http://10.192.72.1:8087/92406a7192e042d19f0f866a4337289e/_secrets/XXX
+
+	clusterDiscoveryUrlParts := strings.Split(string(body), "/")
+	clusterDiscoveryToken := clusterDiscoveryUrlParts[len(clusterDiscoveryUrlParts)-1]
+	clusterDiscoveryRegistrationUrl := fmt.Sprintf("%s/%s", discoveryUrl, clusterDiscoveryToken)
+	fmt.Printf("got URL:\n%s\n", clusterDiscoveryRegistrationUrl)
 
 	// - Generate PKI material, and upload it to etcd at hidden clusterSecret
 
@@ -1184,7 +1195,7 @@ func clusterInit(cmd *cobra.Command, args []string, out io.Writer) error {
 		if err != nil {
 			return err
 		}
-		putPath := fmt.Sprintf("%s/_secrets/_%s", string(body), clusterSecret)
+		putPath := fmt.Sprintf("%s/_secrets/_%s", clusterDiscoveryRegistrationUrl, clusterSecret)
 
 		req, err := http.NewRequest("PUT", putPath, bytes.NewBufferString(pkiJsonEncoded))
 		if err != nil {
@@ -1209,7 +1220,7 @@ func clusterInit(cmd *cobra.Command, args []string, out io.Writer) error {
 			"If you want more than one node in your cluster, run this on other nodes:\n\n"+
 				"    dm cluster join %s:%s\n\n"+
 				"This is the last time this secret will be printed, so keep it safe!\n\n",
-			string(body), clusterSecret,
+			clusterDiscoveryRegistrationUrl, clusterSecret,
 		)
 		if serverCount > 1 {
 			fmt.Printf("=====================================================================\n" +
@@ -1235,7 +1246,7 @@ func clusterInit(cmd *cobra.Command, args []string, out io.Writer) error {
 
 	// - Run clusterCommonSetup.
 	err = clusterCommonSetup(
-		strings.TrimSpace(string(body)), adminPassword, adminKey, pkiPath,
+		strings.TrimSpace(clusterDiscoveryRegistrationUrl), adminPassword, adminKey, pkiPath,
 	)
 	if err != nil {
 		return err
