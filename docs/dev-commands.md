@@ -114,8 +114,13 @@ cat <<EOF >> /etc/hosts
 127.0.0.1 $(hostname).local
 EOF
 
+```
+
+If you are not installing an Ubuntu 18.04 CI runner - then install bazel now - otherwise skip back to the CI install instructions:
+
+```bash
 # install bazel
-apt-get -y install pkg-config zip g++ zlib1g-dev unzip python git-core
+sudo apt-get -y install pkg-config zip g++ zlib1g-dev unzip python git-core
 curl -L -o bazel-installer.sh https://github.com/bazelbuild/bazel/releases/download/0.15.2/bazel-0.15.2-installer-linux-x86_64.sh
 chmod +x bazel-installer.sh && ./bazel-installer.sh --user
 ```
@@ -369,7 +374,13 @@ exit
 exit
 # you should now have accesss because we added authorized_keys
 ssh gitlab-runner@<HOSTNAME-OF-RUNNER>
-su - gitlab-runner
+
+# install bazel
+sudo apt-get -y install pkg-config zip g++ zlib1g-dev unzip python git-core
+curl -L -o bazel-installer.sh https://github.com/bazelbuild/bazel/releases/download/0.15.2/bazel-0.15.2-installer-linux-x86_64.sh
+chmod +x bazel-installer.sh && ./bazel-installer.sh --user
+echo 'export PATH=$PATH:/home/gitlab-runner/bin' >> ~/.bash_profile
+
 # clone the dotmesh repo
 mkdir -p $GOPATH/src/github.com/dotmesh-io
 cd $GOPATH/src/github.com/dotmesh-io
