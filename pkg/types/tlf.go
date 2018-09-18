@@ -11,6 +11,12 @@ import (
 // special admin user with global privs
 const ADMIN_USER_UUID = "00000000-0000-0000-0000-000000000000"
 
+// TODO: to implement forks, we can just construct a TopLevelFilesystem
+// where MasterBranch refers to an id which isn't _actually_ a top level
+// filesystem, because it (at the ZFS layer) does have an origin. This
+// _should_ all "just work", apart from the fact that the name
+// TopLevelFilesystem becomes even more confusing. Rename it to 'Dot'?
+
 type TopLevelFilesystem struct {
 	MasterBranch  DotmeshVolume
 	OtherBranches []DotmeshVolume
@@ -25,6 +31,9 @@ func (t TopLevelFilesystem) AuthorizeOwner(ctx context.Context) (bool, error) {
 func (t TopLevelFilesystem) Authorize(ctx context.Context) (bool, error) {
 	return t.authorize(ctx, true)
 }
+
+// TODO: this is where we'll add support for read-only collaborators
+// when we do https://github.com/dotmesh-io/dotmesh/issues/575
 
 func (t TopLevelFilesystem) authorize(ctx context.Context, includeCollab bool) (bool, error) {
 	user := auth.GetUserFromCtx(ctx)

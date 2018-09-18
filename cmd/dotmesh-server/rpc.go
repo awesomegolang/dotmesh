@@ -469,7 +469,7 @@ func (d *DotmeshRPC) List(
 
 	gather := map[string]map[string]DotmeshVolume{}
 	for _, v := range volumes {
-		// Just get top-level filesystems
+		// Get top-level filesystems
 		if v.Branch == "" {
 			submap, ok := gather[v.Name.Namespace]
 			if !ok {
@@ -1010,8 +1010,6 @@ func (d *DotmeshRPC) Branch(
 	args *struct{ Namespace, Name, SourceBranch, NewBranchName, SourceCommitId string },
 	result *bool,
 ) error {
-	// TODO pass through to a globalFsRequest
-
 	// find the real origin filesystem we're trying to clone from, identified
 	// to the user by "volume + sourcebranch", but to us by an underlying
 	// filesystem id (could be a clone of a clone)
@@ -1065,6 +1063,7 @@ func (d *DotmeshRPC) Branch(
 			Args: &EventArgs{
 				"topLevelFilesystemId": tlf.MasterBranch.Id,
 				"originFilesystemId":   originFilesystemId,
+				"cloneType":            "branch",
 				"originSnapshotId":     args.SourceCommitId,
 				"newBranchName":        args.NewBranchName,
 			},
@@ -1083,6 +1082,101 @@ func (d *DotmeshRPC) Branch(
 			args.SourceBranch, args.SourceCommitId, originFilesystemId, (*e.Args)["newFilesystemId"].(string),
 		)
 		*result = true
+	} else {
+		return maybeError(e)
+	}
+	return nil
+}
+
+func (d *DotmeshRPC) Fork(
+	r *http.Request,
+	args *struct {
+		FromNamespace string
+		FromName      string
+		FromBranch    string
+		FromCommitId  string
+		ToNamespace   string
+		ToName        string
+	},
+	result *struct {
+		NewFilesystemId string
+	},
+) error {
+	err := validator.IsValidVolume(args.FromNamespace, args.FromName)
+	if err != nil {
+		return err
+	}
+
+	err = validator.IsValidBranchName(args.FromBranch)
+	if err != nil {
+		return err
+	}
+
+	err = validator.IsValidVolume(args.ToNamespace, args.ToName)
+	if err != nil {
+		return err
+	}
+
+	tlf, err := d.state.registry.LookupFilesystem(VolumeName{args.FromNamespace, args.FromName})
+	if err != nil {
+		return err
+	}
+	var originFilesystemId string
+
+	// find whether branch refers to top-level fs or a clone, by guessing based
+	// on name convention. XXX this shouldn't be dealing with "master" and
+	// branches
+	if args.FromBranch == DEFAULT_BRANCH {
+		originFilesystemId = tlf.MasterBranch.Id
+	} else {
+		clone, err := d.state.registry.LookupClone(
+			tlf.MasterBranch.Id, args.FromBranch,
+		)
+		originFilesystemId = clone.FilesystemId
+		if err != nil {
+			return err
+		}
+	}
+
+	// target node is responsible for creating registry entry (so that they're
+	// as close as possible to eachother), so give it all the info it needs to
+	// do that.
+	responseChan, err := d.state.globalFsRequest(
+		originFilesystemId,
+		&Event{Name: "clone",
+			Args: &EventArgs{
+				"topLevelFilesystemId": tlf.MasterBranch.Id,
+				"originFilesystemId":   originFilesystemId,
+				"originSnapshotId":     args.FromCommitId,
+				"cloneType":            "fork",
+				// TODO: need to check that user has write access to the
+				// namespace they've asked this to be in - right now this check
+				// is just whether the namespace == their username, in future
+				// it'll become org-aware.
+				"toNamespace": args.ToNamespace,
+				"toName":      args.ToName,
+			},
+		},
+	)
+	if err != nil {
+		return err
+	}
+
+	// TODO this may never succeed, if the master for it never shows up. maybe
+	// this response should have a timeout associated with it.
+	e := <-responseChan
+	if e.Name == "cloned" {
+		log.Printf(
+			"Forked %s/%s:%s@%s (%s) to %s/%s (%s)", args.FromNamespace,
+			args.FromName, args.FromBranch, args.FromCommitId,
+			originFilesystemId, args.ToNamespace, args.ToName,
+			(*e.Args)["newFilesystemId"].(string),
+		)
+		*result = struct {
+			NewFilesystemId string
+		}{
+			NewFilesystemId: (*e.Args)["newFilesystemId"].(string),
+		}
 	} else {
 		return maybeError(e)
 	}

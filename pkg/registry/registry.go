@@ -266,14 +266,6 @@ func (r *DefaultRegistry) ClonesFor(filesystemId string) map[string]types.Clone 
 // 	return false
 // }
 
-// the type as stored in the json in etcd (intermediate representation wrt
-// DotmeshVolume)
-type registryFilesystem struct {
-	Id              string
-	OwnerId         string
-	CollaboratorIds []string
-}
-
 // update a filesystem, including updating etcd and our local state
 func (r *DefaultRegistry) RegisterFilesystem(ctx context.Context, name types.VolumeName, filesystemId string) error {
 	authenticatedUserId := auth.GetUserIDFromCtx(ctx)

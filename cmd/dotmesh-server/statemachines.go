@@ -53,7 +53,7 @@ func newFilesystemMachine(filesystemId string, s *InMemoryState) *fsMachine {
 	}
 }
 
-func activateClone(state *InMemoryState, topLevelFilesystemId, originFilesystemId, originSnapshotId, newCloneFilesystemId, newBranchName string) (string, error) {
+func activateBranch(state *InMemoryState, topLevelFilesystemId, originFilesystemId, originSnapshotId, newCloneFilesystemId, newBranchName string) (string, error) {
 	// RegisterClone(name string, topLevelFilesystemId string, clone Clone)
 	err := state.registry.RegisterClone(
 		newBranchName, topLevelFilesystemId,
@@ -86,6 +86,43 @@ func activateClone(state *InMemoryState, topLevelFilesystemId, originFilesystemI
 	)
 	if err != nil {
 		return "failed-make-cloner-master", err
+	}
+
+	return "", nil
+}
+
+func activateFork(state *InMemoryState, topLevelFilesystemId, originFilesystemId, originSnapshotId, newCloneFilesystemId, toNamespace, toName string) (string, error) {
+	// RegisterClone(name string, topLevelFilesystemId string, clone Clone)
+	err := state.registry.RegisterFilesystem(
+		context.Background(),
+		VolumeName{
+			Namespace: toNamespace,
+			Name:      toName,
+		},
+		topLevelFilesystemId,
+	)
+	if err != nil {
+		return "failed-fork-registration", err
+	}
+
+	// spin off a state machine
+	state.initFilesystemMachine(newCloneFilesystemId)
+	kapi, err := getEtcdKeysApi()
+	if err != nil {
+		return "failed-get-etcd", err
+	}
+	// claim the clone as mine, so that it can be mounted here
+	_, err = kapi.Set(
+		context.Background(),
+		fmt.Sprintf(
+			"%s/filesystems/masters/%s", ETCD_PREFIX, newCloneFilesystemId,
+		),
+		state.myNodeId,
+		// only modify current master if this is a new filesystem id
+		&client.SetOptions{PrevExist: client.PrevNoExist},
+	)
+	if err != nil {
+		return "failed-make-fork-master", err
 	}
 
 	return "", nil
@@ -608,7 +645,7 @@ func (f *fsMachine) recoverFromDivergence(rollbackTo snapshot) error {
 		newBranchName = fmt.Sprintf("%s-DIVERGED-%s", parentBranchName, strings.Replace(t.Format(time.RFC3339), ":", "-", -1))
 	}
 
-	errorName, err := activateClone(f.state, topLevelFilesystemId, f.filesystemId, rollbackTo.Id, newFilesystemId, newBranchName)
+	errorName, err := activateBranch(f.state, topLevelFilesystemId, f.filesystemId, rollbackTo.Id, newFilesystemId, newBranchName)
 
 	if err != nil {
 		return fmt.Errorf("Error recovering from divergence: %+v in %s", err, errorName)

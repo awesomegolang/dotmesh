@@ -265,17 +265,36 @@ func activeState(f *fsMachine) stateFn {
 			// clone a new filesystem from the given snapshot, then spin off a
 			// new fsMachine for it.
 
+			// handles both "branch" and "fork" cases:
+			// - in the branch case, we're making a new branch as a branch
+			//   within a TopLevelFilesystem
+			// - in the fork case, we're making a totally new
+			//   TopLevelFilesystem, potentially owned by a different user
+
 			/*
 				"topLevelFilesystemId": topLevelFilesystemId,
 				"originFilesystemId":   originFilesystemId,
 				"originSnapshotId":     args.SourceSnapshotId,
+
+				AND
+
+				cloneType == "branch"
+
 				"newBranchName":        args.NewBranchName,
+
+				OR
+
+				cloneType == "fork"
+
+				"toNamespace":          args.ToNamespace,
+				"toName":               args.ToName,
 			*/
 
 			topLevelFilesystemId := (*e.Args)["topLevelFilesystemId"].(string)
 			originFilesystemId := (*e.Args)["originFilesystemId"].(string)
 			originSnapshotId := (*e.Args)["originSnapshotId"].(string)
-			newBranchName := (*e.Args)["newBranchName"].(string)
+
+			cloneType := (*e.Args)["cloneType"].(string)
 
 			uuid, err := uuid.NewV4()
 			if err != nil {
@@ -301,16 +320,37 @@ func activeState(f *fsMachine) stateFn {
 				return backoffState
 			}
 
-			errorName, err := activateClone(f.state,
-				topLevelFilesystemId, originFilesystemId, originSnapshotId,
-				newCloneFilesystemId, newBranchName)
-			if err != nil {
-				f.innerResponses <- &Event{
-					Name: errorName, Args: &EventArgs{"err": err},
-				}
-				return backoffState
-			}
+			if cloneType == "branch" {
+				newBranchName := (*e.Args)["newBranchName"].(string)
 
+				errorName, err := activateBranch(
+					f.state,
+					topLevelFilesystemId, originFilesystemId, originSnapshotId,
+					newCloneFilesystemId, newBranchName,
+				)
+				if err != nil {
+					f.innerResponses <- &Event{
+						Name: errorName, Args: &EventArgs{"err": err},
+					}
+					return backoffState
+				}
+
+			} else if cloneType == "fork" {
+				toNamespace := (*e.Args)["newBranchName"].(string)
+				toName := (*e.Args)["newBranchName"].(string)
+
+				errorName, err := activateFork(
+					f.state,
+					topLevelFilesystemId, originFilesystemId, originSnapshotId,
+					newCloneFilesystemId, toNamespace, toName,
+				)
+				if err != nil {
+					f.innerResponses <- &Event{
+						Name: errorName, Args: &EventArgs{"err": err},
+					}
+					return backoffState
+				}
+			}
 			f.innerResponses <- &Event{
 				Name: "cloned",
 				Args: &EventArgs{"newFilesystemId": newCloneFilesystemId},

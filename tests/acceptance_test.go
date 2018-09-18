@@ -1883,6 +1883,119 @@ func TestBackupAndRestoreTwoSingleNodeClusters(t *testing.T) {
 	})
 }
 
+func TestCollaboratorForks(t *testing.T) {
+	citools.TeardownFinishedTestRuns()
+
+	f := citools.Federation{
+		citools.NewCluster(1), // cluster_0_node_0 - hub
+		citools.NewCluster(1), // cluster_1_node_0 - alice
+		citools.NewCluster(1), // cluster_2_node_0 - bob
+	}
+	defer citools.TestMarkForCleanup(f)
+	citools.AddFuncToCleanups(func() { citools.TestMarkForCleanup(f) })
+
+	citools.StartTiming()
+	err := f.Start(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	commonNode := f[0].GetNode(0)
+	aliceNode := f[1].GetNode(0)
+	bobNode := f[2].GetNode(0)
+
+	bobKey := "bob is great"
+	aliceKey := "alice is great"
+
+	// Create users bob and alice on the hub node
+	err = citools.RegisterUser(commonNode, "bob", "bob@bob.com", bobKey)
+	if err != nil {
+		t.Error(err)
+	}
+
+	err = citools.RegisterUser(commonNode, "alice", "alice@bob.com", aliceKey)
+	if err != nil {
+		t.Error(err)
+	}
+
+	t.Run("ForkIt", func(t *testing.T) {
+		// Alice pushes to the common node with no explicit remote volume, should default to alice/pears
+		citools.RunOnNode(t, aliceNode.Container, citools.DockerRun("bananas")+" touch /foo/alice")
+		citools.RunOnNode(t, aliceNode.Container, "echo '"+aliceKey+"' | dm remote add common_bananas alice@"+commonNode.IP)
+		citools.RunOnNode(t, aliceNode.Container, "dm switch bananas")
+		commitId := citools.OutputFromRunOnNode(t, aliceNode.Container, "dm commit -m'Alice commits'")
+		citools.RunOnNode(t, aliceNode.Container, "dm push common_bananas bananas")
+
+		// Check the remote branch got recorded
+		resp := citools.OutputFromRunOnNode(t, aliceNode.Container, "dm dot show -H bananas | grep defaultUpstreamDot")
+		if resp != "defaultUpstreamDot\tcommon_bananas\talice/bananas\n" {
+			t.Error("alice/bananas is not the default remote for bananas on common_bananas")
+		}
+
+		// Add Bob as a collaborator on Alice's bananas
+		err := citools.DoAddCollaborator(commonNode.IP, "alice", aliceKey, "alice", "bananas", "bob")
+		if err != nil {
+			t.Error(err)
+		}
+
+		// TODO bob forks it!
+
+		forkResult := &struct {
+			NewFilesystemId string
+		}{}
+
+		err = citools.DoRPC(commonNode.IP, "bob", bobKey,
+			"DotmeshRPC.Fork",
+			// Forks always create a new
+			// TopLevelFilesystem with a single master
+			// branch (one with an origin).
+			struct {
+				FromNamespace string
+				FromName      string
+				FromBranch    string
+				FromCommitId  string
+				ToNamespace   string
+				ToName        string
+			}{
+				FromNamespace: "alice",
+				FromName:      "bananas",
+				FromBranch:    "master", // Ick
+				FromCommitId:  commitId,
+				ToNamespace:   "bob",
+				ToName:        "mashedbananas",
+			},
+			&forkResult)
+
+		if err != nil {
+			t.Error(err)
+		}
+
+		fmt.Printf("Got response from Fork: %#v\n", forkResult)
+
+		// TODO bob clones it.
+		// TODO bob makes a new commit locally and pushes it back to the fork,
+		// which succeeds, and doesn't affect the original (pre-forked) dot
+
+		// Clone back the fork as bob
+		citools.RunOnNode(t, bobNode.Container, "echo '"+bobKey+"' | dm remote add hub bob@"+commonNode.IP)
+		citools.RunOnNode(t, bobNode.Container, "dm clone hub bob/mashedbananas")
+		citools.RunOnNode(t, bobNode.Container, "dm switch mashedbananas")
+		citools.OutputFromRunOnNode(t, bobNode.Container, "dm log")
+		// ^ should show no commits
+
+		// TODO: should be able to use mashedbananas like a normal dot
+
+	})
+	// it's possible to fork a branch
+	t.Run("ForkBranch", func(t *testing.T) {
+	})
+	// you can't fork a dot you can't read
+	t.Run("ForkFailsForDotWithNoAccess", func(t *testing.T) {
+	})
+	// TODO: what about if alice tries to clone the fork and it turns out
+	// that it shares some filesystem history with one of her dots? this
+	// should be fine, but it might be buggy.
+}
+
 func TestThreeSingleNodeClusters(t *testing.T) {
 	citools.TeardownFinishedTestRuns()
 
@@ -3074,6 +3187,7 @@ func TestStressHandover(t *testing.T) {
 	})
 }
 
+// XXX TODO import this from pkg/types
 type DotmeshVolume struct {
 	Id             string
 	Name           VolumeName

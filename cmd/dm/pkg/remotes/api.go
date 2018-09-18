@@ -34,6 +34,7 @@ type DotmeshAPI struct {
 	verbose       bool
 }
 
+// XXX TODO import this from pkg/types
 type DotmeshVolume struct {
 	Id             string
 	Name           VolumeName
