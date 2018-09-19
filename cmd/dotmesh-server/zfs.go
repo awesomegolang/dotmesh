@@ -18,6 +18,7 @@ import (
 // investigating bugs.
 
 func logZFSCommand(filesystemId, command string) {
+	log.Printf("[logZFSCommand] running %v", command)
 	// Disabled by default; we need to change the code and recompile to enable this.
 	if false {
 		f, err := os.OpenFile(os.Getenv("POOL_LOGFILE"), os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0644)

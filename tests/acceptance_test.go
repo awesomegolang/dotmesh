@@ -1959,7 +1959,7 @@ func TestCollaboratorForks(t *testing.T) {
 				FromNamespace: "alice",
 				FromName:      "bananas",
 				FromBranch:    "master", // Ick
-				FromCommitId:  commitId,
+				FromCommitId:  strings.TrimSpace(commitId),
 				ToNamespace:   "bob",
 				ToName:        "mashedbananas",
 			},

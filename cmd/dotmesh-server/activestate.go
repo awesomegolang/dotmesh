@@ -5,6 +5,7 @@ import (
 	"github.com/nu7hatch/gouuid"
 	"log"
 	"os/exec"
+	"strings"
 )
 
 func activeState(f *fsMachine) stateFn {
@@ -304,18 +305,21 @@ func activeState(f *fsMachine) stateFn {
 				return backoffState
 			}
 			newCloneFilesystemId := uuid.String()
-
-			logZFSCommand(f.filesystemId, fmt.Sprintf("%s clone %s@%s %s", ZFS, fq(f.filesystemId), originSnapshotId, fq(newCloneFilesystemId)))
-			out, err := exec.Command(
-				ZFS, "clone",
-				fq(f.filesystemId)+"@"+originSnapshotId,
+			cmdArgs := []string{"clone",
+				fq(f.filesystemId) + "@" + originSnapshotId,
 				fq(newCloneFilesystemId),
-			).CombinedOutput()
+			}
+			logZFSCommand(f.filesystemId, ZFS+" "+strings.Join(cmdArgs, " "))
+			out, err := exec.Command(ZFS, cmdArgs...).CombinedOutput()
 			if err != nil {
 				log.Printf("%v while trying to clone %s", err, fq(f.filesystemId))
 				f.innerResponses <- &Event{
 					Name: "failed-clone",
-					Args: &EventArgs{"err": err, "combined-output": string(out)},
+					Args: &EventArgs{
+						"err":             err,
+						"combined-output": string(out),
+						"command":         ZFS + " " + strings.Join(cmdArgs, " "),
+					},
 				}
 				return backoffState
 			}
@@ -336,8 +340,8 @@ func activeState(f *fsMachine) stateFn {
 				}
 
 			} else if cloneType == "fork" {
-				toNamespace := (*e.Args)["newBranchName"].(string)
-				toName := (*e.Args)["newBranchName"].(string)
+				toNamespace := (*e.Args)["toNamespace"].(string)
+				toName := (*e.Args)["toName"].(string)
 
 				errorName, err := activateFork(
 					f.state,

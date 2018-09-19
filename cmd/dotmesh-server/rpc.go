@@ -1117,11 +1117,40 @@ func (d *DotmeshRPC) Fork(
 		return err
 	}
 
+	ok := validator.IsUUID(args.FromCommitId)
+	if !ok {
+		return fmt.Errorf("%v is not a valid UUID (passed as FromCommitId)", args.FromCommitId)
+	}
+
+	requestUserId := auth.GetUserID(r)
+	user, err := d.state.registry.userManager.Get(&user.Query{
+		Ref: requestUserId,
+	})
+	if err != nil {
+		return fmt.Errorf("Unable to locate authenticated user %v.", requestUserId)
+	}
+
+	// TODO: when we implement org support, this will need to be a more
+	// sophisticated check (does the user have write access to the org?).
+	if user.Name != args.ToNamespace {
+		return fmt.Errorf("User doesn't have permission to clone to that namespace")
+	}
+
 	tlf, err := d.state.registry.LookupFilesystem(VolumeName{args.FromNamespace, args.FromName})
 	if err != nil {
 		return err
 	}
 	var originFilesystemId string
+
+	extantTarget := d.state.registry.Exists(VolumeName{args.FromNamespace, args.FromName}, args.FromBranch)
+	// can't clone to filesystem which already exists
+	// TODO this should fail in a concurrency-safe way as well as an up-front (friendly UX) check
+	if extantTarget != "" {
+		return fmt.Errorf(
+			"Cannot clone to an existing target %s/%s@%s",
+			args.FromNamespace, args.FromName, args.FromBranch,
+		)
+	}
 
 	// find whether branch refers to top-level fs or a clone, by guessing based
 	// on name convention. XXX this shouldn't be dealing with "master" and

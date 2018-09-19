@@ -94,6 +94,8 @@ func activateBranch(state *InMemoryState, topLevelFilesystemId, originFilesystem
 func activateFork(state *InMemoryState, topLevelFilesystemId, originFilesystemId, originSnapshotId, newCloneFilesystemId, toNamespace, toName string) (string, error) {
 	// RegisterClone(name string, topLevelFilesystemId string, clone Clone)
 	err := state.registry.RegisterFilesystem(
+		// TODO: replace context.Background() with a user that corresponds to
+		// the authenticated user that initiated the request
 		context.Background(),
 		VolumeName{
 			Namespace: toNamespace,
