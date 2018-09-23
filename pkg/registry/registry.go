@@ -59,6 +59,12 @@ type Registry interface {
 
 	DumpTopLevelFilesystems() []*types.TopLevelFilesystem
 	DumpClones() map[string]map[string]types.Clone
+
+	GetUserManager() user.UserManager
+}
+
+func (r *DefaultRegistry) GetUserManager() user.UserManager {
+	return r.userManager
 }
 
 type DefaultRegistry struct {

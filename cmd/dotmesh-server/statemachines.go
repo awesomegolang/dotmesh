@@ -13,6 +13,9 @@ import (
 	"github.com/coreos/etcd/client"
 	"github.com/nu7hatch/gouuid"
 	"golang.org/x/net/context"
+
+	"github.com/dotmesh-io/dotmesh/pkg/auth"
+	"github.com/dotmesh-io/dotmesh/pkg/user"
 )
 
 // core functions used by files ending `state` which I couldn't think of a good place for.
@@ -91,12 +94,29 @@ func activateBranch(state *InMemoryState, topLevelFilesystemId, originFilesystem
 	return "", nil
 }
 
-func activateFork(state *InMemoryState, topLevelFilesystemId, originFilesystemId, originSnapshotId, newCloneFilesystemId, toNamespace, toName string) (string, error) {
-	// RegisterClone(name string, topLevelFilesystemId string, clone Clone)
-	err := state.registry.RegisterFilesystem(
-		// TODO: replace context.Background() with a user that corresponds to
-		// the authenticated user that initiated the request
-		context.Background(),
+func activateFork(
+	state *InMemoryState, topLevelFilesystemId, originFilesystemId, originSnapshotId, newCloneFilesystemId, toNamespace, toName string,
+) (string, error) {
+
+	// We register the filesystem as the user that corresponds to the
+	// authenticated user that initiated the request.  XXX: At the moment the
+	// username happens to be equal to toNamespace (and the authz check for
+	// this happens in rpc.go), but that might change in the future when we
+	// implement orgs...
+
+	u, err := state.registry.GetUserManager().Get(&user.Query{
+		Ref: toNamespace,
+	})
+	if err != nil {
+		return "failed-fetch-user", err
+	}
+
+	err = state.registry.RegisterFilesystem(
+		auth.SetAuthenticationDetailsCtx(
+			context.Background(),
+			u,
+			user.AuthenticationTypeNone,
+		),
 		VolumeName{
 			Namespace: toNamespace,
 			Name:      toName,

@@ -1123,7 +1123,7 @@ func (d *DotmeshRPC) Fork(
 	}
 
 	requestUserId := auth.GetUserID(r)
-	user, err := d.state.registry.userManager.Get(&user.Query{
+	user, err := d.state.registry.GetUserManager().Get(&user.Query{
 		Ref: requestUserId,
 	})
 	if err != nil {

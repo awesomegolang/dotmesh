@@ -350,7 +350,7 @@ func activeState(f *fsMachine) stateFn {
 				)
 				if err != nil {
 					f.innerResponses <- &Event{
-						Name: errorName, Args: &EventArgs{"err": err},
+						Name: errorName, Args: &EventArgs{"err": fmt.Sprintf("%v", err)},
 					}
 					return backoffState
 				}
