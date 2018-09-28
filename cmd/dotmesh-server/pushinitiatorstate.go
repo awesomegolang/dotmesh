@@ -500,7 +500,7 @@ func (f *fsMachine) retryPush(
 				case *ToSnapsAhead:
 					fallthrough
 				case *ToSnapsDiverged:
-					if transferReqest.StashDivergence {
+					if transferRequest.StashDivergence {
 						returnErr = false
 					}
 				}
