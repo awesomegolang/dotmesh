@@ -482,7 +482,7 @@ func (f *fsMachine) retryPush(
 			snapRange, err := canApply(localSnaps, remoteSnaps)
 			if err != nil {
 				returnErr := true
-				switch err := err.(type) {
+				switch err.(type) {
 				case *ToSnapsUpToDate:
 					// no action, we're up-to-date for this filesystem
 					pollResult.Status = "finished"
