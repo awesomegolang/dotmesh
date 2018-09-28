@@ -106,15 +106,16 @@ func pushPeerState(f *fsMachine) stateFn {
 		}()
 	}()
 
-	// if f.lastTransferRequest.LastCommonSnapshot != nil {
-	// 	e := f.recoverFromDivergence(f.lastTransferRequest.LastCommonSnapshot)
-	// 	if e != nil {
-	// 		return &Event{
-	// 			Name: "failed-stashing",
-	// 			Args: &EventArgs{"err": e},
-	// 		}, backoffState
-	// 	}
-	// }
+	if f.lastTransferRequest.StashDivergence {
+		e := f.recoverFromDivergence(f.lastTransferRequest.LastCommonSnapshot)
+		if e != nil {
+			f.innerResponses <- &Event{
+				Name: "failed-stashing",
+				Args: &EventArgs{"err": e},
+			}
+			return backoffState
+		}
+	}
 	// Here we are about to block, so confirm we are ready at this
 	// point or the caller won't start to push and unblock us
 	log.Printf("[pushPeerState:%s] clearing peer to send", f.filesystemId)

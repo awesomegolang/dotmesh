@@ -501,11 +501,13 @@ func (f *fsMachine) retryPush(
 					if transferRequest.StashDivergence {
 						returnErr = false
 						pollResult.LastCommonSnapshot = err.latestCommonSnapshot
+						pollResult.StashDivergence = transferRequest.StashDivergence
 					}
 				case *ToSnapsDiverged:
 					if transferRequest.StashDivergence {
 						returnErr = false
 						pollResult.LastCommonSnapshot = err.latestCommonSnapshot
+						pollResult.StashDivergence = transferRequest.StashDivergence
 					}
 				}
 				if returnErr {
@@ -534,7 +536,6 @@ func (f *fsMachine) retryPush(
 			pollResult.FilesystemId = toFilesystemId
 			pollResult.StartingCommit = fromSnap
 			pollResult.TargetCommit = snapRange.toSnap.Id
-			pollResult.StashDivergence = transferRequest.StashDivergence
 
 			err = updatePollResult(transferRequestId, *pollResult)
 			if err != nil {
