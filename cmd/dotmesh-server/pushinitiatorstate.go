@@ -498,7 +498,9 @@ func (f *fsMachine) retryPush(
 						Name: "peer-up-to-date",
 					}, backoffState
 				case *ToSnapsAhead:
-					fallthrough
+					if transferRequest.StashDivergence {
+						returnErr = false
+					}
 				case *ToSnapsDiverged:
 					if transferRequest.StashDivergence {
 						returnErr = false
