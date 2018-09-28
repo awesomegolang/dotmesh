@@ -445,7 +445,7 @@ func (f *fsMachine) retryPush(
 				"[retryPush] from (%s, %s) to (%s, %s), pollResult: %+v",
 				fromFilesystemId, fromSnapshotId, toFilesystemId, toSnapshotId, pollResult,
 			)
-			var remoteSnaps []*snapshot
+			var remoteSnaps []*types.Snapshot
 			err := client.CallRemote(
 				ctx,
 				"DotmeshRPC.CommitsById",
@@ -464,11 +464,11 @@ func (f *fsMachine) retryPush(
 					Args: &EventArgs{"err": err, "filesystemId": toFilesystemId},
 				}, backoffState
 			}
-			var snaps []*snapshot
+			var snaps []*types.Snapshot
 			func() {
 				fsMachine.snapshotsLock.Lock()
 				defer fsMachine.snapshotsLock.Unlock()
-				snaps = fsMachine.filesystem.snapshots
+				snaps = fsMachine.filesystem.Snapshots
 			}()
 			// if we're given a target snapshot, restrict f.filesystem.snapshots to
 			// that snapshot
@@ -482,7 +482,7 @@ func (f *fsMachine) retryPush(
 			snapRange, err := canApply(localSnaps, remoteSnaps)
 			if err != nil {
 				returnErr := true
-				switch err.(type) {
+				switch err := err.(type) {
 				case *ToSnapsUpToDate:
 					// no action, we're up-to-date for this filesystem
 					pollResult.Status = "finished"
@@ -500,10 +500,12 @@ func (f *fsMachine) retryPush(
 				case *ToSnapsAhead:
 					if transferRequest.StashDivergence {
 						returnErr = false
+						pollResult.LastCommonSnapshot = err.latestCommonSnapshot
 					}
 				case *ToSnapsDiverged:
 					if transferRequest.StashDivergence {
 						returnErr = false
+						pollResult.LastCommonSnapshot = err.latestCommonSnapshot
 					}
 				}
 				if returnErr {
@@ -532,6 +534,7 @@ func (f *fsMachine) retryPush(
 			pollResult.FilesystemId = toFilesystemId
 			pollResult.StartingCommit = fromSnap
 			pollResult.TargetCommit = snapRange.toSnap.Id
+			pollResult.StashDivergence = transferRequest.StashDivergence
 
 			err = updatePollResult(transferRequestId, *pollResult)
 			if err != nil {

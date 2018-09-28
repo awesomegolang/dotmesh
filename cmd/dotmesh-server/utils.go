@@ -19,6 +19,7 @@ import (
 	"time"
 	//niobuffer "github.com/djherbis/buffer"
 	//"github.com/djherbis/nio"
+	"github.com/dotmesh-io/dotmesh/pkg/types"
 )
 
 // NB: It's important that the following includes characters _not_ included in
@@ -521,9 +522,9 @@ func (o *Once) Do(f func()) {
 	}
 }
 
-func restrictSnapshots(localSnaps []*snapshot, toSnapshotId string) ([]*snapshot, error) {
+func restrictSnapshots(localSnaps []*types.Snapshot, toSnapshotId string) ([]*types.Snapshot, error) {
 	if toSnapshotId != "" {
-		newLocalSnaps := []*snapshot{}
+		newLocalSnaps := []*types.Snapshot{}
 		for _, s := range localSnaps {
 			newLocalSnaps = append(newLocalSnaps, s)
 			if s.Id == toSnapshotId {

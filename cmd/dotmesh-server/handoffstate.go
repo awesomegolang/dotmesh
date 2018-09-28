@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"github.com/coreos/etcd/client"
+	"github.com/dotmesh-io/dotmesh/pkg/types"
 	"golang.org/x/net/context"
 	"log"
 )
@@ -44,7 +45,7 @@ func handoffState(f *fsMachine) stateFn {
 	// take a snapshot and wait for it to arrive on the target
 	response, _ := f.snapshot(&Event{
 		Name: "snapshot",
-		Args: &EventArgs{"metadata": metadata{
+		Args: &EventArgs{"metadata": types.Metadata{
 			"type":   "migration",
 			"author": "system",
 			"message": fmt.Sprintf(
@@ -93,10 +94,10 @@ waitingForSlaveSnapshot:
 		// through etcd yet, so use our definitive knowledge about our local
 		// state...
 
-		snaps := func() []*snapshot {
+		snaps := func() []*types.Snapshot {
 			f.snapshotsLock.Lock()
 			defer f.snapshotsLock.Unlock()
-			return f.filesystem.snapshots
+			return f.filesystem.Snapshots
 		}()
 
 		f.transitionedTo(

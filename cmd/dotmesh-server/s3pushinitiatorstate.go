@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"github.com/dotmesh-io/dotmesh/pkg/types"
 	"log"
 	"os"
 )
@@ -116,7 +117,7 @@ func s3PushInitiatorState(f *fsMachine) stateFn {
 		// create a new commit with the type "dotmesh.metadata_only" so that we can ignore it when detecting new commits
 		response, _ := f.snapshot(&Event{
 			Name: "snapshot",
-			Args: &EventArgs{"metadata": metadata{
+			Args: &EventArgs{"metadata": types.Metadata{
 				"message": "adding s3 metadata",
 				"type":    "dotmesh.metadata_only",
 			},

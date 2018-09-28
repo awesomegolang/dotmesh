@@ -17,6 +17,7 @@ import (
 	"github.com/nu7hatch/gouuid"
 	"golang.org/x/net/context"
 
+	"github.com/dotmesh-io/dotmesh/pkg/types"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -770,7 +771,7 @@ func (s *InMemoryState) deserializeDispatchAndRespond(fs string, node *client.No
 // Possible alternative: use different etcd clients for the Watch versus the
 // Set.
 func (s *InMemoryState) updateSnapshotsFromKnownState(
-	server, filesystem string, snapshots *[]snapshot,
+	server, filesystem string, snapshots *[]types.Snapshot,
 ) error {
 	deleted, err := isFilesystemDeletedInEtcd(filesystem)
 	if err != nil {
@@ -783,7 +784,7 @@ func (s *InMemoryState) updateSnapshotsFromKnownState(
 
 	s.globalSnapshotCacheLock.Lock()
 	if _, ok := s.globalSnapshotCache[server]; !ok {
-		s.globalSnapshotCache[server] = map[string][]snapshot{}
+		s.globalSnapshotCache[server] = map[string][]types.Snapshot{}
 	}
 	s.globalSnapshotCache[server][filesystem] = *snapshots
 	s.globalSnapshotCacheLock.Unlock()
@@ -966,7 +967,7 @@ func (s *InMemoryState) fetchAndWatchEtcd() error {
 			return nil
 		}
 
-		snapshots := &[]snapshot{}
+		snapshots := &[]types.Snapshot{}
 		if node.Value == "" {
 			// Key was deleted, so there's no snapshots
 			return s.updateSnapshotsFromKnownState(server, filesystem, snapshots)

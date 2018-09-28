@@ -89,32 +89,13 @@ type SafeConfig struct {
 // state machinery
 type stateFn func(*fsMachine) stateFn
 
-type metadata map[string]string
-type snapshot struct {
-	// exported for json serialization
-	Id       string
-	Metadata *metadata
-	// private (do not serialize)
-	filesystem *filesystem
-}
-
 type Clone = types.Clone
-
-type filesystem struct {
-	id        string
-	exists    bool
-	mounted   bool
-	snapshots []*snapshot
-	// support filesystem which is clone of another filesystem, for branching
-	// purposes, with origin e.g. "<fs-uuid-of-actual-origin-snapshot>@<snap-id>"
-	origin Origin
-}
 
 // a "filesystem machine" or "filesystem state machine"
 type fsMachine struct {
 	// which ZFS filesystem this statemachine is operating on
 	filesystemId string
-	filesystem   *filesystem
+	filesystem   *types.Filesystem
 	// channel of requests going in to the state machine
 	requests chan *Event
 	// inner versions of the above
@@ -209,6 +190,9 @@ type TransferPollResult struct {
 	Size               int64 // size of current segment in bytes
 	Sent               int64 // number of bytes of current segment sent so far
 	Message            string
+
+	StashDivergence    bool
+	LastCommonSnapshot types.Snapshot
 }
 
 type Config struct {
@@ -225,10 +209,10 @@ type Config struct {
 // parent. In this case the Origin FilesystemId will always point to its direct
 // parent.
 
-func castToMetadata(val interface{}) metadata {
-	meta, ok := val.(metadata)
+func castToMetadata(val interface{}) types.Metadata {
+	meta, ok := val.(types.Metadata)
 	if !ok {
-		meta = metadata{}
+		meta = types.Metadata{}
 		// massage the data into the right type
 		cast := val.(map[string]interface{})
 		for k, v := range cast {
@@ -239,7 +223,7 @@ func castToMetadata(val interface{}) metadata {
 }
 
 type Prelude struct {
-	SnapshotProperties []*snapshot
+	SnapshotProperties []*types.Snapshot
 }
 
 type containerInfo struct {

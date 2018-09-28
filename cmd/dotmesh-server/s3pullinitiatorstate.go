@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"github.com/dotmesh-io/dotmesh/pkg/types"
 	"github.com/nu7hatch/gouuid"
 	"os"
 )
@@ -99,7 +100,7 @@ func s3PullInitiatorState(f *fsMachine) stateFn {
 			f.errorDuringTransfer("couldnt-write-s3-metadata-pull", err)
 		}
 		response, _ := f.snapshot(&Event{Name: "snapshot",
-			Args: &EventArgs{"metadata": metadata{"message": "s3 content"},
+			Args: &EventArgs{"metadata": types.Metadata{"message": "s3 content"},
 				"snapshotId": snapshotId}})
 		if response.Name != "snapshotted" {
 			f.innerResponses <- response

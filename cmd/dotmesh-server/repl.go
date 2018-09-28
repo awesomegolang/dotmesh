@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+
+	"github.com/dotmesh-io/dotmesh/pkg/types"
 	"log"
 	"os"
 	"sort"
@@ -93,7 +95,7 @@ func (s *InMemoryState) repl() {
 					if err == nil {
 						e := <-ch
 						if e.Name == "created" {
-							out("Created", fsMachine.filesystem.id, "\n")
+							out("Created", fsMachine.filesystem.Id, "\n")
 						} else {
 							out("Unexpected response", e.Name, "-", e.Args, "\n")
 						}
@@ -150,7 +152,7 @@ func (s *InMemoryState) repl() {
 					out("please specify the filesystem id as an argument, " +
 						"with optional comma/equals deliminated metadata\n")
 				} else {
-					meta := metadata{}
+					meta := types.Metadata{}
 					if len(words) == 3 {
 						// parse a=b,c=d
 						for _, body := range strings.Split(words[2], ",") {
@@ -225,7 +227,7 @@ func (s *InMemoryState) repl() {
 					} else {
 						out("snapshots:\n")
 						filesystem.snapshotsLock.Lock()
-						for _, snapshot := range filesystem.filesystem.snapshots {
+						for _, snapshot := range filesystem.filesystem.Snapshots {
 							out(
 								"- id:", snapshot.Id, "\n",
 								" metadata:", snapshot.Metadata, "\n",
@@ -245,11 +247,11 @@ func (s *InMemoryState) repl() {
 				for _, fsName := range filesystems {
 					fs := s.filesystems[fsName]
 					fs.snapshotsLock.Lock()
-					numSnapshots := len(fs.filesystem.snapshots)
+					numSnapshots := len(fs.filesystem.Snapshots)
 					out(
-						fmt.Sprintf("%-32s", fs.filesystem.id),
-						"\texists:", fs.filesystem.exists,
-						"\tmounted:", fs.filesystem.mounted,
+						fmt.Sprintf("%-32s", fs.filesystem.Id),
+						"\texists:", fs.filesystem.Exists,
+						"\tmounted:", fs.filesystem.Mounted,
 						"\tstate:",
 						fmt.Sprintf("%-8s", fs.currentState),
 						"\tstatus:",

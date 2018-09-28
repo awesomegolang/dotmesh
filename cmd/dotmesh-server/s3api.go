@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/base64"
 	"fmt"
+	"github.com/dotmesh-io/dotmesh/pkg/types"
 	"log"
 	"os"
 	"strings"
@@ -79,7 +80,7 @@ func (f *fsMachine) saveFile(request S3ApiRequest) stateFn {
 		return backoffState
 	}
 	response, _ := f.snapshot(&Event{Name: "snapshot",
-		Args: &EventArgs{"metadata": metadata{"message": "saving file put by s3 api " + request.Filename, "author": request.User}}})
+		Args: &EventArgs{"metadata": types.Metadata{"message": "saving file put by s3 api " + request.Filename, "author": request.User}}})
 	if response.Name != "snapshotted" {
 		f.innerResponses <- response
 		return backoffState

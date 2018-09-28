@@ -16,6 +16,7 @@ import (
 	"golang.org/x/net/context"
 
 	"github.com/dotmesh-io/dotmesh/pkg/registry"
+	"github.com/dotmesh-io/dotmesh/pkg/types"
 	"github.com/dotmesh-io/dotmesh/pkg/user"
 
 	log "github.com/sirupsen/logrus"
@@ -30,7 +31,7 @@ type InMemoryState struct {
 	mastersCacheLock           *sync.RWMutex
 	serverAddressesCache       map[string]string
 	serverAddressesCacheLock   *sync.RWMutex
-	globalSnapshotCache        map[string]map[string][]snapshot
+	globalSnapshotCache        map[string]map[string][]types.Snapshot
 	globalSnapshotCacheLock    *sync.RWMutex
 	globalStateCache           map[string]map[string]map[string]string
 	globalStateCacheLock       *sync.RWMutex
@@ -74,7 +75,7 @@ func NewInMemoryState(localPoolId string, config Config) *InMemoryState {
 		serverAddressesCache:     make(map[string]string),
 		serverAddressesCacheLock: &sync.RWMutex{},
 		// server id => filesystem id => snapshot metadata
-		globalSnapshotCache:     make(map[string]map[string][]snapshot),
+		globalSnapshotCache:     make(map[string]map[string][]types.Snapshot),
 		globalSnapshotCacheLock: &sync.RWMutex{},
 		// server id => filesystem id => state machine metadata
 		globalStateCache:     make(map[string]map[string]map[string]string),
@@ -189,9 +190,9 @@ func (s *InMemoryState) alignMountStateWithMasters(filesystemId string) error {
 				filesystemId,
 				s.masterFor(filesystemId),
 				s.myNodeId,
-				fs.filesystem.mounted,
+				fs.filesystem.Mounted,
 			)
-			return fs, fs.filesystem.mounted, nil
+			return fs, fs.filesystem.Mounted, nil
 		}()
 		if err != nil {
 			return err
@@ -221,7 +222,7 @@ func (s *InMemoryState) calculatePrelude(toFilesystemId, toSnapshotId string) (P
 	if err != nil {
 		return prelude, err
 	}
-	pointerSnaps := []*snapshot{}
+	pointerSnaps := []*types.Snapshot{}
 	for _, s := range snaps {
 		// Take a copy of s to take a pointer of, rather than getting
 		// lots of pointers to so in the pointerSnaps slice...
@@ -502,24 +503,24 @@ func (s *InMemoryState) currentMaster(filesystemId string) (string, error) {
 	return master, nil
 }
 
-func (s *InMemoryState) snapshotsForCurrentMaster(filesystemId string) ([]snapshot, error) {
+func (s *InMemoryState) snapshotsForCurrentMaster(filesystemId string) ([]types.Snapshot, error) {
 	master, err := s.currentMaster(filesystemId)
 	if err != nil {
-		return []snapshot{}, err
+		return []types.Snapshot{}, err
 	}
 	return s.snapshotsFor(master, filesystemId)
 }
 
-func (s *InMemoryState) snapshotsFor(server string, filesystemId string) ([]snapshot, error) {
+func (s *InMemoryState) snapshotsFor(server string, filesystemId string) ([]types.Snapshot, error) {
 	s.globalSnapshotCacheLock.RLock()
 	defer s.globalSnapshotCacheLock.RUnlock()
 	filesystems, ok := s.globalSnapshotCache[server]
 	if !ok {
-		return []snapshot{}, nil
+		return []types.Snapshot{}, nil
 	}
 	snapshots, ok := filesystems[filesystemId]
 	if !ok {
-		return []snapshot{}, nil
+		return []types.Snapshot{}, nil
 	}
 	return snapshots, nil
 }

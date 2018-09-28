@@ -22,8 +22,8 @@ func newFilesystemMachine(filesystemId string, s *InMemoryState) *fsMachine {
 	// initialize the fsMachine with a filesystem struct that has bare minimum
 	// information (just the filesystem id) required to get started
 	return &fsMachine{
-		filesystem: &filesystem{
-			id: filesystemId,
+		filesystem: &types.Filesystem{
+			Id: filesystemId,
 		},
 		// stored here as well to avoid excessive locking on filesystem struct,
 		// which gets clobbered, just to read its id
@@ -183,7 +183,7 @@ func (f *fsMachine) pollDirty() error {
 	if err != nil {
 		return err
 	}
-	if f.filesystem.mounted {
+	if f.filesystem.Mounted {
 		dirtyDelta, sizeBytes, err := getDirtyDelta(
 			f.filesystemId, f.latestSnapshot(),
 		)
@@ -222,8 +222,8 @@ func (f *fsMachine) pollDirty() error {
 func (f *fsMachine) latestSnapshot() string {
 	f.snapshotsLock.Lock()
 	defer f.snapshotsLock.Unlock()
-	if len(f.filesystem.snapshots) > 0 {
-		return f.filesystem.snapshots[len(f.filesystem.snapshots)-1].Id
+	if len(f.filesystem.Snapshots) > 0 {
+		return f.filesystem.Snapshots[len(f.filesystem.Snapshots)-1].Id
 	}
 	return ""
 }
@@ -254,7 +254,7 @@ func (f *fsMachine) updateEtcdAboutSnapshots() error {
 	serialized, err := func() ([]byte, error) {
 		f.snapshotsLock.Lock()
 		defer f.snapshotsLock.Unlock()
-		return json.Marshal(f.filesystem.snapshots)
+		return json.Marshal(f.filesystem.Snapshots)
 	}()
 
 	// since we want atomic rewrites, we can just save the entire
@@ -362,11 +362,11 @@ func (f *fsMachine) transitionedTo(state string, status string) {
 }
 
 func (f *fsMachine) snapshot(e *Event) (responseEvent *Event, nextState stateFn) {
-	var meta metadata
+	var meta types.Metadata
 	if val, ok := (*e.Args)["metadata"]; ok {
 		meta = castToMetadata(val)
 	} else {
-		meta = metadata{}
+		meta = types.Metadata{}
 	}
 	meta["timestamp"] = fmt.Sprintf("%d", time.Now().UnixNano())
 	metadataEncoded, err := encodeMetadata(meta)
@@ -413,11 +413,11 @@ func (f *fsMachine) snapshot(e *Event) (responseEvent *Event, nextState stateFn)
 	func() {
 		f.snapshotsLock.Lock()
 		defer f.snapshotsLock.Unlock()
-		log.Printf("[snapshot] Succeeded snapshotting (out: '%s'), saving: %+v", out, &snapshot{
+		log.Printf("[snapshot] Succeeded snapshotting (out: '%s'), saving: %+v", out, &types.Snapshot{
 			Id: snapshotId, Metadata: &meta,
 		})
-		f.filesystem.snapshots = append(f.filesystem.snapshots,
-			&snapshot{Id: snapshotId, Metadata: &meta})
+		f.filesystem.Snapshots = append(f.filesystem.Snapshots,
+			&types.Snapshot{Id: snapshotId, Metadata: &meta})
 	}()
 	err = f.snapshotsChanged()
 	if err != nil {
@@ -468,10 +468,10 @@ func (f *fsMachine) startContainers() error {
 }
 
 // probably the wrong way to do it
-func pointers(snapshots []snapshot) []*snapshot {
-	newList := []*snapshot{}
+func pointers(snapshots []types.Snapshot) []*types.Snapshot {
+	newList := []*types.Snapshot{}
 	for _, snap := range snapshots {
-		s := &snapshot{}
+		s := &types.Snapshot{}
 		*s = snap
 		newList = append(newList, s)
 	}
@@ -488,7 +488,7 @@ func (f *fsMachine) plausibleSnapRange() (*snapshotRange, error) {
 
 	f.snapshotsLock.Lock()
 	defer f.snapshotsLock.Unlock()
-	snapRange, err := canApply(pointers(snapshots), f.filesystem.snapshots)
+	snapRange, err := canApply(pointers(snapshots), f.filesystem.Snapshots)
 
 	return snapRange, err
 }
@@ -555,15 +555,15 @@ func (f *fsMachine) snapshotsChanged() error {
 	// any observers in the process.
 	// XXX this _might_ break the fact that handoff doesn't check what snapshot
 	// it's notified about.
-	var snaps []*snapshot
+	var snaps []*types.Snapshot
 	func() {
 		f.snapshotsLock.Lock()
 		defer f.snapshotsLock.Unlock()
-		snaps = f.filesystem.snapshots
+		snaps = f.filesystem.Snapshots
 	}()
 
 	// []*snapshot => []snapshot, gah
-	snapsAlternate := []snapshot{}
+	snapsAlternate := []types.Snapshot{}
 	for _, snap := range snaps {
 		snapsAlternate = append(snapsAlternate, *snap)
 	}
@@ -581,7 +581,7 @@ func (f *fsMachine) snapshotsChanged() error {
 // step 4: Make dotmesh aware of the new branch
 // ...something something fsmachine something etcd...
 
-func (f *fsMachine) recoverFromDivergence(rollbackTo snapshot) error {
+func (f *fsMachine) recoverFromDivergence(rollbackTo types.Snapshot) error {
 	// Mint an ID for the new branch
 	id, err := uuid.NewV4()
 	if err != nil {

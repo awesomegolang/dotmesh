@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"github.com/dotmesh-io/dotmesh/pkg/types"
 	"log"
 	"time"
 )
@@ -105,6 +106,15 @@ func pushPeerState(f *fsMachine) stateFn {
 		}()
 	}()
 
+	// if f.lastTransferRequest.LastCommonSnapshot != nil {
+	// 	e := f.recoverFromDivergence(f.lastTransferRequest.LastCommonSnapshot)
+	// 	if e != nil {
+	// 		return &Event{
+	// 			Name: "failed-stashing",
+	// 			Args: &EventArgs{"err": e},
+	// 		}, backoffState
+	// 	}
+	// }
 	// Here we are about to block, so confirm we are ready at this
 	// point or the caller won't start to push and unblock us
 	log.Printf("[pushPeerState:%s] clearing peer to send", f.filesystemId)
@@ -163,7 +173,7 @@ func pushPeerState(f *fsMachine) stateFn {
 			return backoffState
 		// check that the snapshot is the one we're expecting
 		case s := <-newSnapsOnMaster:
-			sn := s.(snapshot)
+			sn := s.(types.Snapshot)
 			log.Printf(
 				"[pushPeerState] got snapshot %+v while waiting for one to arrive", sn,
 			)
@@ -176,7 +186,7 @@ func pushPeerState(f *fsMachine) stateFn {
 				func() {
 					f.snapshotsLock.Lock()
 					defer f.snapshotsLock.Unlock()
-					mounted = f.filesystem.mounted
+					mounted = f.filesystem.Mounted
 				}()
 				if mounted {
 					log.Printf(
