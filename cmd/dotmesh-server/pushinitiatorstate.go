@@ -481,7 +481,8 @@ func (f *fsMachine) retryPush(
 			}
 			snapRange, err := canApply(localSnaps, remoteSnaps)
 			if err != nil {
-				switch err.(type) {
+				returnErr := true
+				switch err := err.(type) {
 				case *ToSnapsUpToDate:
 					// no action, we're up-to-date for this filesystem
 					pollResult.Status = "finished"
@@ -496,10 +497,18 @@ func (f *fsMachine) retryPush(
 					return &Event{
 						Name: "peer-up-to-date",
 					}, backoffState
+				case *ToSnapsAhead:
+					fallthrough
+				case *ToSnapsDiverged:
+					if transferReqest.StashDivergence {
+						returnErr = false
+					}
 				}
-				return &Event{
-					Name: "error-in-canapply-when-pushing", Args: &EventArgs{"err": err},
-				}, backoffState
+				if returnErr {
+					return &Event{
+						Name: "error-in-canapply-when-pushing", Args: &EventArgs{"err": err},
+					}, backoffState
+				}
 			}
 			// TODO peer may error out of pushPeerState, wouldn't we like to get them
 			// back into it somehow? we could attempt to do that with by sending a new
