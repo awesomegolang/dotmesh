@@ -76,9 +76,9 @@ func (z ZFSSender) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			"admin",
 			admin.ApiKey,
 		)
-		postClient := new(http.Client)
+
 		log.Printf("[ZFSSender:%s] Proxying pull from %s: %s", z.filesystem, master, url)
-		resp, err := postClient.Do(req)
+		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			w.Write([]byte(fmt.Sprintf("Can't proxy pull from %s: %+v.\n", url, err)))
@@ -361,7 +361,7 @@ func (z ZFSReceiver) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	err = cmd.Run()
 	if err != nil {
 		log.Printf(
-			"[ZFSReceiver:%s] Got error %s when running zfs recv, check zfs-recv-stderr.log",
+			"[ZFSReceiver:%s] Got error %s when running zfs recv, check the logs for output that looks like it's from zfs",
 			z.filesystem, err,
 		)
 		pipeReader.Close()

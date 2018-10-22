@@ -158,16 +158,11 @@ func unmnt(p string) (string, error) {
 }
 
 func isFilesystemMounted(fs string) (bool, error) {
-	out, err := exec.Command("mount").CombinedOutput()
+	code, err := returnCode("mountpoint", mnt(fs))
 	if err != nil {
 		return false, err
 	}
-	for _, line := range strings.Split(string(out), "\n") {
-		if strings.Contains(line, fs) && strings.Contains(line, "zfs") {
-			return true, nil
-		}
-	}
-	return false, nil
+	return code == 0, nil
 }
 
 func containerMntParent(id VolumeName) string {
@@ -466,17 +461,21 @@ func pipe(
 				return
 			}
 		}
+		// NB: handleErr as the final thing we do in both of the following
+		// cases because it's polite to stop notifying (notifyFunc) after we're
+		// said we're finished (handleErr).
+
 		if err == io.EOF {
-			// expected case, log no error
-			handleErr("", reader, writer, r, w)
 			// sync notification here (and in error case below) in case the
 			// caller depends on synchronous notification of final state before
 			// exit
 			notifyFunc(totalBytes, time.Now().UnixNano()-startTime)
+			// expected case, log no error
+			handleErr("", reader, writer, r, w)
 			return
 		} else if err != nil {
-			handleErr(fmt.Sprintf("Error reading from %s: %s", rDesc, err), reader, writer, r, w)
 			notifyFunc(totalBytes, time.Now().UnixNano()-startTime)
+			handleErr(fmt.Sprintf("Error reading from %s: %s", rDesc, err), reader, writer, r, w)
 			return
 		}
 	}
@@ -645,5 +644,23 @@ func getMyStack() string {
 		} else {
 			len = len * 2
 		}
+	}
+}
+
+func formatBytes(i int64) string {
+	var f float64 = float64(i)
+	switch {
+	case i < 0:
+		return "-" + formatBytes(-i)
+	case i >= 1024*1024*1024*1024:
+		return fmt.Sprintf("%.1fTiB", f/(1024.0*1024.0*1024.0*1024.0))
+	case i >= 1024*1024*1024:
+		return fmt.Sprintf("%.1fGiB", f/(1024.0*1024.0*1024.0))
+	case i >= 1024*1024:
+		return fmt.Sprintf("%.1fMiB", f/(1024.0*1024.0))
+	case i >= 1024:
+		return fmt.Sprintf("%.1fKiB", f/1024.0)
+	default:
+		return fmt.Sprintf("%dB", i)
 	}
 }

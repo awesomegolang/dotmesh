@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io/ioutil"
+	"math/rand"
 	"net/http"
 	"os"
 	"regexp"
@@ -13,6 +14,10 @@ import (
 	"time"
 
 	"github.com/dotmesh-io/citools"
+
+	natsServer "github.com/nats-io/gnatsd/server"
+	natsTest "github.com/nats-io/gnatsd/test"
+	nats "github.com/nats-io/go-nats"
 )
 
 /*
@@ -212,7 +217,161 @@ func TestRecoverFromUnmountedDotOnMaster(t *testing.T) {
 		assertMountState(t, fsId, true)
 
 	})
+}
 
+func TestPubSub(t *testing.T) {
+
+	// TODO: refactor test, need to start Dotmesh server with NATS environment variables
+	t.Skip()
+
+	// single node tests
+	citools.TeardownFinishedTestRuns()
+
+	f := citools.Federation{citools.NewCluster(1)}
+	defer citools.TestMarkForCleanup(f)
+	citools.AddFuncToCleanups(func() { citools.TestMarkForCleanup(f) })
+
+	citools.StartTiming()
+	err := f.Start(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	node1 := f[0].GetNode(0).Container
+
+	natsIP, err := citools.FindAHostIP()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Random port, to try and avoid clashing with concurrent test runs
+	natsPort := 30000 + rand.Intn(1000)
+
+	// Random username and password picked, just in case third parties find our open port
+	natsUsername := fmt.Sprintf("%d", rand.Int31())
+	natsPassword := fmt.Sprintf("%d", rand.Int31())
+	natsSubject := "testCommit"
+
+	defaultNatsTestOptions := &natsServer.Options{
+		Host:           natsIP,
+		Port:           natsPort,
+		Username:       natsUsername,
+		Password:       natsPassword,
+		NoLog:          true,
+		NoSigs:         true,
+		MaxControlLine: 256,
+	}
+
+	natsSrv := natsTest.RunServer(defaultNatsTestOptions)
+
+	natsUrl := fmt.Sprintf("nats://%s:%d", natsIP, natsPort)
+
+	natsCli, err := nats.Connect(natsUrl, nats.UserInfo(natsUsername, natsPassword))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	natsEnc, err := nats.NewEncodedConn(natsCli, nats.GOB_ENCODER)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("Commit", func(t *testing.T) {
+		fsname := citools.UniqName()
+
+		citools.RunOnNode(t, node1, citools.DockerRun(fsname)+" touch /foo/X")
+		citools.RunOnNode(t, node1, "dm switch "+fsname)
+
+		fsId := strings.TrimSpace(
+			citools.OutputFromRunOnNode(t, node1, "dm dot show -H | grep masterBranchId | cut -f 2"),
+		)
+
+		received := make(chan string)
+
+		subs, err := natsEnc.Subscribe(natsSubject, func(msg *struct {
+			FilesystemId string
+			Namespace    string
+			Name         string
+			Branch       string
+			CommitId     string
+			Metadata     map[string]string
+		}) {
+			check := func(wanted, got, name string) {
+				if wanted != got {
+					t.Errorf("Notification %s mismatch: Wanted %s, got %s", name, wanted, got)
+				}
+			}
+
+			check(fsId, msg.FilesystemId, "filesystem ID")
+			check("admin", msg.Namespace, "namespace")
+			check(fsname, msg.Name, "name")
+			check("", msg.Branch, "branch")
+			check("hello", msg.Metadata["message"], "commit message")
+			check("admin", msg.Metadata["author"], "commit author")
+
+			received <- msg.CommitId
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		var result bool
+		err = citools.DoRPC(f[0].GetNode(0).IP, "admin", f[0].GetNode(0).ApiKey,
+			"DotmeshRPC.SubscribeForCommits",
+			struct {
+				Url, Username, Password, Subject string
+			}{
+				natsUrl,
+				natsUsername,
+				natsPassword,
+				natsSubject,
+			},
+			&result,
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		citools.RunOnNode(t, node1, "dm commit -m 'hello'")
+
+		// get a list of commits so we have the id of the commit
+		var commitIds []struct {
+			Id string
+		}
+
+		err = citools.DoRPC(f[0].GetNode(0).IP, "admin", f[0].GetNode(0).ApiKey,
+			"DotmeshRPC.Commits",
+			struct {
+				Namespace string
+				Name      string
+			}{
+				Namespace: "admin",
+				Name:      fsname,
+			},
+			&commitIds)
+
+		if err != nil {
+			t.Error(err)
+		}
+
+		if len(commitIds) != 1 {
+			t.Errorf("Expected 1 commit ids, got %d", len(commitIds))
+		}
+
+		commitId := commitIds[0].Id
+
+		select {
+		case <-time.After(10 * time.Second):
+			t.Error("Failed to receive notification after ten seconds!")
+		case notificationCommitId := <-received:
+			// Ok, cool, it arrived
+			if commitId != notificationCommitId {
+				t.Errorf("Received notification commit ID was %s, but expected %s", notificationCommitId, commitId)
+			}
+		}
+		subs.Unsubscribe()
+	})
+
+	natsSrv.Shutdown()
 }
 
 func TestSingleNode(t *testing.T) {
@@ -845,6 +1004,45 @@ func TestSingleNode(t *testing.T) {
 		if !strings.Contains(st, fmt.Sprintf("Each metadata value must be a name=value pair: Applesgreen")) {
 			t.Error(fmt.Sprintf("We didn't get an error when we didn't use an equals sign in the metadata string: %+v", st))
 		}
+	})
+
+	t.Run("InvalidRequest", func(t *testing.T) {
+		fsname := citools.UniqName()
+		citools.RunOnNode(t, node1, "dm init "+fsname)
+		resp := citools.OutputFromRunOnNode(t, node1, "dm list")
+		if !strings.Contains(resp, fsname) {
+			t.Error("unable to find volume name in ouput")
+		}
+
+		fsId := strings.TrimSpace(
+			citools.OutputFromRunOnNode(t, node1, "dm dot show -H | grep masterBranchId | cut -f 2"),
+		)
+
+		// Inject an invalid request
+		resp, err := citools.DoSetDebugFlag(
+			f[0].GetNode(0).IP,
+			"admin",
+			f[0].GetNode(0).ApiKey,
+			"SendMangledEvent",
+			fsId,
+		)
+		if err != nil {
+			t.Error(err)
+		}
+
+		if !strings.Contains(resp, "invalid-request") {
+			t.Errorf("Response didn't contained 'invalid-request', should be something like '{\"Name\":\"invalid-request\",\"Args\":{\"error\":{\"Offset\":1},\"request\":null}}' but was: %s", resp)
+		}
+
+		// Check filesystem still works to some extent
+		citools.RunOnNode(t, node1, "dm switch "+fsname)
+		citools.RunOnNode(t, node1, "dm commit -m \"Jabberwocky\"")
+		st := citools.OutputFromRunOnNode(t, node1, "dm log")
+
+		if !strings.Contains(st, "Jabberwocky") {
+			t.Error(fmt.Sprintf("We didn't get the commit back from dm log: %+v", st))
+		}
+
 	})
 
 	t.Run("ApiKeys", func(t *testing.T) {
@@ -1656,6 +1854,54 @@ func TestTwoSingleNodeClusters(t *testing.T) {
 			)
 		}
 	})
+	t.Run("PushStashDiverged", func(t *testing.T) {
+		fsname := citools.UniqName()
+		citools.RunOnNode(t, node2, citools.DockerRun(fsname)+" touch /foo/X")
+		citools.RunOnNode(t, node2, "dm switch "+fsname)
+		citools.RunOnNode(t, node2, "dm commit -m 'hello'")
+		citools.RunOnNode(t, node2, "dm push cluster_0")
+
+		citools.RunOnNode(t, node1, "dm switch "+fsname)
+		resp := citools.OutputFromRunOnNode(t, node1, "dm log")
+
+		if !strings.Contains(resp, "hello") {
+			t.Error("unable to find commit message remote's log output")
+		}
+		// now make a commit that will diverge the filesystems
+		citools.RunOnNode(t, node1, "dm commit -m 'node1 commit'")
+
+		// test incremental push
+		citools.RunOnNode(t, node2, "dm commit -m 'node2 commit'")
+		citools.RunOnNode(t, node2, "dm push --stash-on-divergence cluster_0")
+
+		output := citools.OutputFromRunOnNode(t, node1, "dm branch")
+		if !strings.Contains(output, "master-DIVERGED-") {
+			t.Error("Stashed push did not create divergent branch")
+		}
+	})
+	t.Run("PushStashToSnapsAhead", func(t *testing.T) {
+		fsname := citools.UniqName()
+		citools.RunOnNode(t, node2, citools.DockerRun(fsname)+" touch /foo/X")
+		citools.RunOnNode(t, node2, "dm switch "+fsname)
+		citools.RunOnNode(t, node2, "dm commit -m 'hello'")
+		citools.RunOnNode(t, node2, "dm push cluster_0")
+
+		citools.RunOnNode(t, node1, "dm switch "+fsname)
+		resp := citools.OutputFromRunOnNode(t, node1, "dm log")
+
+		if !strings.Contains(resp, "hello") {
+			t.Error("unable to find commit message remote's log output")
+		}
+		// now make a commit that will to-snaps ahead filesystems
+		citools.RunOnNode(t, node1, "dm commit -m 'node1 commit'")
+
+		citools.RunOnNode(t, node2, "dm push --stash-on-divergence cluster_0")
+
+		output := citools.OutputFromRunOnNode(t, node1, "dm branch")
+		if !strings.Contains(output, "master-DIVERGED-") {
+			t.Error("Stashed push did not create divergent branch")
+		}
+	})
 	t.Run("ResetAfterPushThenPushMySQL", func(t *testing.T) {
 		fsname := citools.UniqName()
 		citools.RunOnNode(t, node2, citools.DockerRun(
@@ -1745,6 +1991,53 @@ func TestTwoSingleNodeClusters(t *testing.T) {
 		}
 	})
 
+	t.Run("CloneStashDiverged", func(t *testing.T) {
+		fsname := citools.UniqName()
+		citools.RunOnNode(t, node1, "dm init "+fsname)
+		citools.RunOnNode(t, node1, citools.DockerRun(fsname)+" touch /foo/X")
+		citools.RunOnNode(t, node1, "dm switch "+fsname)
+		citools.RunOnNode(t, node1, "dm commit -m 'hello'")
+		citools.RunOnNode(t, node2, "dm clone cluster_0 "+fsname)
+		citools.RunOnNode(t, node2, "dm switch "+fsname)
+		citools.RunOnNode(t, node2, "dm commit -m 'hello'")
+		citools.RunOnNode(t, node2, "dm commit -m 'hello2'")
+		citools.RunOnNode(t, node2, "dm clone --stash-on-divergence cluster_0 "+fsname)
+		output := citools.OutputFromRunOnNode(t, node2, "dm branch")
+		if !strings.Contains(output, "master-DIVERGED-") {
+			t.Error("Stashed clone did not create divergent branch")
+		}
+	})
+	t.Run("CloneStashToSnaps", func(t *testing.T) {
+		fsname := citools.UniqName()
+		citools.RunOnNode(t, node1, "dm init "+fsname)
+		citools.RunOnNode(t, node1, citools.DockerRun(fsname)+" touch /foo/X")
+		citools.RunOnNode(t, node1, "dm switch "+fsname)
+		citools.RunOnNode(t, node1, "dm commit -m 'hello'")
+		citools.RunOnNode(t, node2, "dm clone cluster_0 "+fsname)
+		citools.RunOnNode(t, node2, "dm switch "+fsname)
+		citools.RunOnNode(t, node2, "dm commit -m 'hello'")
+		citools.RunOnNode(t, node2, "dm clone --stash-on-divergence cluster_0 "+fsname)
+		output := citools.OutputFromRunOnNode(t, node2, "dm branch")
+		if !strings.Contains(output, "master-DIVERGED-") {
+			t.Error("Stashed clone did not create divergent branch")
+		}
+	})
+	t.Run("CloneStashDirty", func(t *testing.T) {
+		fsname := citools.UniqName()
+		citools.RunOnNode(t, node1, "dm init "+fsname)
+		citools.RunOnNode(t, node1, citools.DockerRun(fsname)+" touch /foo/X")
+		citools.RunOnNode(t, node1, "dm switch "+fsname)
+		citools.RunOnNode(t, node1, "dm commit -m 'hello'")
+		citools.RunOnNode(t, node2, "dm clone cluster_0 "+fsname)
+		citools.RunOnNode(t, node2, "dm switch "+fsname)
+		citools.RunOnNode(t, node2, citools.DockerRun(fsname)+" touch /foo/Y")
+		waitForDirtyState(t, node2, fsname)
+		citools.RunOnNode(t, node2, "dm clone --stash-on-divergence cluster_0 "+fsname)
+		output := citools.OutputFromRunOnNode(t, node2, "dm branch")
+		if !strings.Contains(output, "master-DIVERGED-") {
+			t.Error("Stashed clone did not create divergent branch")
+		}
+	})
 	t.Run("Bug74MissingMetadata", func(t *testing.T) {
 		fsname := citools.UniqName()
 

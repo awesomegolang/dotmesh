@@ -5,7 +5,7 @@ import (
 	"io"
 	"os"
 
-	"github.com/dotmesh-io/dotmesh/cmd/dm/pkg/remotes"
+	"github.com/dotmesh-io/dotmesh/pkg/client"
 	"github.com/spf13/cobra"
 )
 
@@ -35,7 +35,7 @@ Online help: https://docs.dotmesh.com/references/cli/#push-dm-push-remote-remote
 `,
 		Run: func(cmd *cobra.Command, args []string) {
 			err := func() error {
-				dm, err := remotes.NewDotmeshAPI(configPath, verboseOutput)
+				dm, err := client.NewDotmeshAPI(configPath, verboseOutput)
 				if err != nil {
 					return err
 				}
@@ -44,7 +44,7 @@ Online help: https://docs.dotmesh.com/references/cli/#push-dm-push-remote-remote
 					return err
 				}
 				transferId, err := dm.RequestTransfer(
-					"push", peer, filesystemName, branchName, pushRemoteVolume, "", nil,
+					"push", peer, filesystemName, branchName, pushRemoteVolume, "", nil, stash,
 				)
 				if err != nil {
 					return err
@@ -63,5 +63,6 @@ Online help: https://docs.dotmesh.com/references/cli/#push-dm-push-remote-remote
 	}
 	cmd.PersistentFlags().StringVarP(&pushRemoteVolume, "remote-name", "", "",
 		"Remote dot name to push to, including remote namespace e.g. alice/apples")
+	cmd.PersistentFlags().BoolVarP(&stash, "stash-on-divergence", "", false, "stash any divergence on a branch and continue")
 	return cmd
 }

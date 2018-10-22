@@ -22,6 +22,7 @@ import (
 
 	"github.com/dotmesh-io/dotmesh/pkg/auth"
 	dmclient "github.com/dotmesh-io/dotmesh/pkg/client"
+	"github.com/dotmesh-io/dotmesh/pkg/types"
 	"github.com/dotmesh-io/dotmesh/pkg/user"
 
 	log "github.com/sirupsen/logrus"
@@ -775,6 +776,33 @@ func (d *DotmeshRPC) CommitsById(
 	return nil
 }
 
+func (d *DotmeshRPC) StashAfter(
+	r *http.Request,
+	args *types.StashRequest,
+	newBranch *string,
+) error {
+	responseChan, err := d.state.globalFsRequest(
+		args.FilesystemId,
+		&Event{Name: "stash",
+			Args: &EventArgs{"snapshotId": args.SnapshotId}},
+	)
+	if err != nil {
+		// meh, maybe REST *would* be nicer
+		return err
+	}
+
+	// TODO this may never succeed, if the master for it never shows up. maybe
+	// this response should have a timeout associated with it.
+	e := <-responseChan
+	if e.Name == "stashed" {
+		log.Printf("Stashed %s", args.FilesystemId)
+	} else {
+		return maybeError(e)
+	}
+	*newBranch = (*e.Args)["NewBranchName"].(string)
+	return nil
+}
+
 // Acknowledge that an authenticated connection had been successfully established.
 func (d *DotmeshRPC) Ping(r *http.Request, args *struct{}, result *bool) error {
 	*result = true
@@ -1414,7 +1442,7 @@ func (d *DotmeshRPC) GetTransfer(
 
 func (d *DotmeshRPC) S3Transfer(
 	r *http.Request,
-	args *S3TransferRequest,
+	args *types.S3TransferRequest,
 	result *string,
 ) error {
 	localVolumeName := VolumeName{args.LocalNamespace, args.LocalName}
@@ -1629,7 +1657,7 @@ func (d *DotmeshRPC) dirtyDataAndRunningContainers(ctx context.Context, filesyst
 // completion
 func (d *DotmeshRPC) Transfer(
 	r *http.Request,
-	args *TransferRequest,
+	args *types.TransferRequest,
 	result *string,
 ) error {
 	client := dmclient.NewJsonRpcClient(args.User, args.Peer, args.ApiKey, args.Port)
@@ -1794,12 +1822,36 @@ func (d *DotmeshRPC) Transfer(
 			}
 
 			if dirtyBytes > 0 {
-				// TODO backoff and retry above
-				return fmt.Errorf(
-					"Aborting because there are %.2f MiB of uncommitted changes on volume "+
-						"where data would be written. Use 'dm reset' to roll back.",
-					float64(dirtyBytes)/(1024*1024),
-				)
+				if args.StashDivergence {
+					user, _, _ := r.BasicAuth()
+					meta := metadata{"message": "committing dirty data ready for stashing", "author": user}
+					responseChan, err := d.state.globalFsRequest(
+						filesystemId,
+						&Event{Name: "snapshot",
+							Args: &EventArgs{"metadata": meta}},
+					)
+					if err != nil {
+						// meh, maybe REST *would* be nicer
+						return err
+					}
+
+					// TODO this may never succeed, if the master for it never shows up. maybe
+					// this response should have a timeout associated with it.
+					e := <-responseChan
+					if e.Name == "snapshotted" {
+						log.Printf("Stash on diverge requested with dirty data so snapshotted %s", filesystemId)
+					} else {
+						return maybeError(e)
+					}
+				} else {
+					// TODO backoff and retry above
+					return fmt.Errorf(
+						"Aborting because there are %.2f MiB of uncommitted changes on volume "+
+							"where data would be written. Use 'dm reset' to roll back.",
+						float64(dirtyBytes)/(1024*1024),
+					)
+				}
+
 			}
 
 			if len(containersRunning) > 0 {
@@ -1851,12 +1903,12 @@ func (d *DotmeshRPC) Transfer(
 	return nil
 }
 
-func safeS3(t S3TransferRequest) S3TransferRequest {
+func safeS3(t types.S3TransferRequest) types.S3TransferRequest {
 	t.SecretKey = "<redacted>"
 	return t
 }
 
-func safeArgs(t TransferRequest) TransferRequest {
+func safeArgs(t types.TransferRequest) types.TransferRequest {
 	t.ApiKey = "<redacted>"
 	return t
 }
@@ -2378,7 +2430,39 @@ func (d *DotmeshRPC) SetDebugFlag(
 		}
 		e := <-responseChan
 		log.Printf("[SetDebugFlag] deliberately unhandled event replied with %#v", e)
-		*result = ""
+		*result = fmt.Sprintf("%#v", e)
+	case "SendMangledEvent":
+		filesystemId := args.FlagValue
+
+		kapi, err := getEtcdKeysApi()
+		if err != nil {
+			return err
+		}
+
+		key := fmt.Sprintf("%s/filesystems/requests/%s/INVALID", ETCD_PREFIX, filesystemId)
+		resp, err := kapi.Set(
+			context.Background(),
+			key,
+			"{", // Nasty invalid JSON
+			&client.SetOptions{PrevExist: client.PrevNoExist, TTL: 604800 * time.Second},
+		)
+		if err != nil {
+			log.Warnf("[SetDebugFlag:SendMangledEvent] - error setting %s: %s", key, err)
+			return err
+		}
+
+		watcher := kapi.Watcher(
+			// TODO maybe responses should get their own IDs, so that there can be
+			// multiple responses to a given event (at present we just assume one)
+			fmt.Sprintf("%s/filesystems/responses/%s/INVALID", ETCD_PREFIX, filesystemId),
+			&client.WatcherOptions{AfterIndex: resp.Node.CreatedIndex, Recursive: true},
+		)
+		node, err := watcher.Next(context.Background())
+		if err != nil {
+			return err
+		}
+
+		*result = node.Node.Value
 	default:
 		*result = ""
 		return fmt.Errorf("Unknown debug flag %s", args.FlagName)
@@ -2386,6 +2470,12 @@ func (d *DotmeshRPC) SetDebugFlag(
 
 	log.Printf("DEBUG FLAG: %s <- %s (was %s)", args.FlagName, args.FlagValue, *result)
 	return nil
+}
+
+func recoverFromPanic() {
+	if r := recover(); r != nil {
+		fmt.Println("Recovered in f", r)
+	}
 }
 
 func (d *DotmeshRPC) DumpInternalState(
@@ -2421,7 +2511,7 @@ func (d *DotmeshRPC) DumpInternalState(
 	s := d.state
 
 	go func() {
-		defer recover() // Don't kill the entire server if resultChan is closed because we took too long
+		defer recoverFromPanic() // Don't kill the entire server if resultChan is closed because we took too long
 		resultChan <- []string{"filesystems.STARTED", "yes"}
 		s.filesystemsLock.Lock()
 		defer s.filesystemsLock.Unlock()
@@ -2451,9 +2541,6 @@ func (d *DotmeshRPC) DumpInternalState(
 			resultChan <- []string{fmt.Sprintf("filesystems.%s.lastTransferRequestId", id), fs.lastTransferRequestId}
 			resultChan <- []string{fmt.Sprintf("filesystems.%s.dirtyDelta", id), fmt.Sprintf("%d", fs.dirtyDelta)}
 			resultChan <- []string{fmt.Sprintf("filesystems.%s.sizeBytes", id), fmt.Sprintf("%d", fs.sizeBytes)}
-			if fs.lastPollResult != nil {
-				resultChan <- []string{fmt.Sprintf("filesystems.%s.lastPollResult", id), toJsonString(*fs.lastPollResult)}
-			}
 			if fs.handoffRequest != nil {
 				resultChan <- []string{fmt.Sprintf("filesystems.%s.handoffRequest", id), toJsonString(*fs.handoffRequest)}
 			}
@@ -2463,7 +2550,7 @@ func (d *DotmeshRPC) DumpInternalState(
 	}()
 
 	go func() {
-		defer recover() // Don't kill the entire server if resultChan is closed because we took too long
+		defer recoverFromPanic() // Don't kill the entire server if resultChan is closed because we took too long
 		resultChan <- []string{"mastersCache.STARTED", "yes"}
 		s.mastersCacheLock.Lock()
 		defer s.mastersCacheLock.Unlock()
@@ -2474,7 +2561,7 @@ func (d *DotmeshRPC) DumpInternalState(
 	}()
 
 	go func() {
-		defer recover() // Don't kill the entire server if resultChan is closed because we took too long
+		defer recoverFromPanic() // Don't kill the entire server if resultChan is closed because we took too long
 		resultChan <- []string{"serverAddressesCache.STARTED", "yes"}
 		s.serverAddressesCacheLock.Lock()
 		defer s.serverAddressesCacheLock.Unlock()
@@ -2485,7 +2572,7 @@ func (d *DotmeshRPC) DumpInternalState(
 	}()
 
 	go func() {
-		defer recover() // Don't kill the entire server if resultChan is closed because we took too long
+		defer recoverFromPanic() // Don't kill the entire server if resultChan is closed because we took too long
 		resultChan <- []string{"globalSnapshotCache.STARTED", "yes"}
 		s.globalSnapshotCacheLock.Lock()
 		defer s.globalSnapshotCacheLock.Unlock()
@@ -2503,7 +2590,7 @@ func (d *DotmeshRPC) DumpInternalState(
 	}()
 
 	go func() {
-		defer recover() // Don't kill the entire server if resultChan is closed because we took too long
+		defer recoverFromPanic() // Don't kill the entire server if resultChan is closed because we took too long
 		resultChan <- []string{"globalStateCache.STARTED", "yes"}
 		s.globalStateCacheLock.Lock()
 		defer s.globalStateCacheLock.Unlock()
@@ -2518,7 +2605,7 @@ func (d *DotmeshRPC) DumpInternalState(
 	}()
 
 	go func() {
-		defer recover() // Don't kill the entire server if resultChan is closed because we took too long
+		defer recoverFromPanic() // Don't kill the entire server if resultChan is closed because we took too long
 		resultChan <- []string{"globalContainerCache.STARTED", "yes"}
 		s.globalContainerCacheLock.Lock()
 		defer s.globalContainerCacheLock.Unlock()
@@ -2529,7 +2616,9 @@ func (d *DotmeshRPC) DumpInternalState(
 	}()
 
 	go func() {
-		defer recover() // Don't kill the entire server if resultChan is closed because we took too long
+		// Don't kill the entire server if resultChan is closed because we took too long
+
+		defer recoverFromPanic()
 		resultChan <- []string{"globalDirtyCache.STARTED", "yes"}
 		s.globalDirtyCacheLock.Lock()
 		defer s.globalDirtyCacheLock.Unlock()
@@ -2540,7 +2629,7 @@ func (d *DotmeshRPC) DumpInternalState(
 	}()
 
 	go func() {
-		defer recover() // Don't kill the entire server if resultChan is closed because we took too long
+		defer recoverFromPanic() // Don't kill the entire server if resultChan is closed because we took too long
 		resultChan <- []string{"interclusterTransfers.STARTED", "yes"}
 		s.interclusterTransfersLock.Lock()
 		defer s.interclusterTransfersLock.Unlock()
@@ -2551,7 +2640,7 @@ func (d *DotmeshRPC) DumpInternalState(
 	}()
 
 	go func() {
-		defer recover() // Don't kill the entire server if resultChan is closed because we took too long
+		defer recoverFromPanic() // Don't kill the entire server if resultChan is closed because we took too long
 		resultChan <- []string{"registry.TopLevelFilesystems.STARTED", "yes"}
 		// s.registry.TopLevelFilesystemsLock.Lock()
 		// defer s.registry.TopLevelFilesystemsLock.Unlock()
@@ -2575,7 +2664,7 @@ func (d *DotmeshRPC) DumpInternalState(
 	}()
 
 	go func() {
-		defer recover() // Don't kill the entire server if resultChan is closed because we took too long
+		defer recoverFromPanic() // Don't kill the entire server if resultChan is closed because we took too long
 		resultChan <- []string{"registry.Clones.STARTED", "yes"}
 		// s.registry.ClonesLock.Lock()
 		// defer s.registry.ClonesLock.Unlock()
@@ -2589,7 +2678,7 @@ func (d *DotmeshRPC) DumpInternalState(
 	}()
 
 	go func() {
-		defer recover() // Don't kill the entire server if resultChan is closed because we took too long
+		defer recoverFromPanic() // Don't kill the entire server if resultChan is closed because we took too long
 		resultChan <- []string{"etcdWait.STARTED", "yes"}
 		s.etcdWaitTimestampLock.Lock()
 		defer s.etcdWaitTimestampLock.Unlock()
@@ -2602,7 +2691,7 @@ func (d *DotmeshRPC) DumpInternalState(
 	resultChan <- []string{"versionInfo", toJsonString(s.versionInfo)}
 
 	go func() {
-		defer recover() // Don't kill the entire server if resultChan is closed because we took too long
+		defer recoverFromPanic() // Don't kill the entire server if resultChan is closed because we took too long
 		resultChan <- []string{"goroutines.STARTED", "yes"}
 
 		numProfiles := 1

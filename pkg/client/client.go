@@ -5,11 +5,14 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net/http"
+	"os"
+	"reflect"
 
 	"golang.org/x/net/context"
 
 	"github.com/gorilla/rpc/v2/json2"
 	"github.com/opentracing/opentracing-go"
+	//	opentracinglog "github.com/opentracing/opentracing-go/log"
 	"github.com/openzipkin/zipkin-go-opentracing/examples/middleware"
 )
 
@@ -24,6 +27,21 @@ type JsonRpcClient struct {
 	Hostname string
 	ApiKey   string
 	Port     int
+	Verbose  bool
+}
+
+func (jsonRpcClient JsonRpcClient) String() string {
+	v := reflect.ValueOf(jsonRpcClient)
+	toString := ""
+	for i := 0; i < v.NumField(); i++ {
+		fieldName := v.Type().Field(i).Name
+		if fieldName == "ApiKey" {
+			toString = toString + fmt.Sprintf(" %v=%v,", fieldName, "****")
+		} else {
+			toString = toString + fmt.Sprintf(" %v=%v,", fieldName, v.Field(i).Interface())
+		}
+	}
+	return toString
 }
 
 func NewJsonRpcClient(user, hostname, apiKey string, port int) *JsonRpcClient {
@@ -73,6 +91,12 @@ func (j *JsonRpcClient) reallyCallRemote(
 	if err != nil {
 		return err
 	}
+
+	if j.Verbose {
+		fmt.Fprintln(os.Stdout, "send rpc request")
+		fmt.Fprintln(os.Stdout, string(message))
+	}
+
 	req, err := http.NewRequest("POST", url, bytes.NewBuffer(message))
 	if err != nil {
 		return err
@@ -102,6 +126,12 @@ func (j *JsonRpcClient) reallyCallRemote(
 		span.SetTag("error", err.Error())
 		return fmt.Errorf("Error reading body: %s", err)
 	}
+
+	if j.Verbose {
+		fmt.Fprintln(os.Stdout, "got rpc response")
+		fmt.Fprintln(os.Stdout, string(b))
+	}
+
 	err = json2.DecodeClientResponse(bytes.NewBuffer(b), &result)
 	if err != nil {
 		span.SetTag("error", fmt.Sprintf("Response '%s' yields error %s", string(b), err))
@@ -145,4 +175,15 @@ func DeduceUrl(ctx context.Context, hostnames []string, mode, user, apiKey strin
 
 	return "", fmt.Errorf("Unable to connect to any of the addresses attempted: %+v, errs: %v", hostnames, errs)
 
+}
+
+func (client *JsonRpcClient) Ping() (bool, error) {
+	var response bool
+	ctx, cancel := context.WithTimeout(context.Background(), RPC_TIMEOUT)
+	defer cancel()
+	err := client.CallRemote(ctx, "DotmeshRPC.Ping", struct{}{}, &response)
+	if err != nil {
+		return false, err
+	}
+	return response, nil
 }

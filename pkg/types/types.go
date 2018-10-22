@@ -105,7 +105,8 @@ type TransferRequest struct {
 	RemoteName       string
 	RemoteBranchName string
 	// TODO could also include SourceSnapshot here
-	TargetCommit string // optional, "" means "latest"
+	TargetCommit    string // optional, "" means "latest"
+	StashDivergence bool
 }
 
 func (transferRequest TransferRequest) String() string {
@@ -120,6 +121,11 @@ func (transferRequest TransferRequest) String() string {
 		}
 	}
 	return toString
+}
+
+type StashRequest struct {
+	FilesystemId string
+	SnapshotId   string
 }
 
 type EventArgs map[string]interface{}

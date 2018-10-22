@@ -2,16 +2,22 @@ package main
 
 import (
 	"fmt"
-	"github.com/nu7hatch/gouuid"
-	"log"
 	"os/exec"
 	"strings"
+
+	"github.com/nu7hatch/gouuid"
+
+	log "github.com/sirupsen/logrus"
 )
 
 func activeState(f *fsMachine) stateFn {
 	f.transitionedTo("active", "waiting")
 	log.Printf("entering active state for %s", f.filesystemId)
 	select {
+	case file := <-f.fileInputIO:
+		return f.saveFile(file)
+	case file := <-f.fileOutputIO:
+		return f.readFile(file)
 	case e := <-f.innerRequests:
 		if e.Name == "delete" {
 			err := f.state.deleteFilesystem(f.filesystemId)
@@ -49,19 +55,6 @@ func activeState(f *fsMachine) stateFn {
 				}
 			}
 			return activeState
-		} else if e.Name == "put-file" {
-			//filename := (*e.Args)["key"].(string)
-			log.Println(e.Args)
-			s3ApiRequest, err := s3ApiRequestify((*e.Args)["S3Request"])
-			if err != nil {
-				log.Printf("%v while trying to cast to s3request", err)
-				f.innerResponses <- &Event{
-					Name: "failed-s3apirequest-cast",
-					Args: &EventArgs{"err": err},
-				}
-				return backoffState
-			}
-			return f.saveFile(s3ApiRequest)
 		} else if e.Name == "transfer" {
 
 			// TODO dedupe
@@ -178,6 +171,21 @@ func activeState(f *fsMachine) stateFn {
 			response, state := f.mountSnap(snapId, true)
 			f.innerResponses <- response
 			return state
+		} else if e.Name == "stash" {
+			snapshotId := (*e.Args)["snapshotId"].(string)
+			e := f.recoverFromDivergence(snapshotId)
+			if e != nil {
+				f.innerResponses <- &Event{
+					Name: "failed-stash",
+					Args: &EventArgs{"err": e},
+				}
+				return backoffState
+			}
+			f.innerResponses <- &Event{
+				Name: "stashed",
+				Args: &EventArgs{"NewBranchName": "TODO"},
+			}
+			return discoveringState
 		} else if e.Name == "rollback" {
 			// roll back to given snapshot
 			rollbackTo := (*e.Args)["rollbackTo"].(string)

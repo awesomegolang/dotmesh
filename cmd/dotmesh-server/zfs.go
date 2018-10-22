@@ -297,11 +297,12 @@ func discoverSystem(fs string) (*filesystem, error) {
 		}, nil
 	}
 	// is filesystem mounted?
-	code, err = returnCode("mountpoint", mnt(fs))
+
+	mounted, err := isFilesystemMounted(fs)
 	if err != nil {
 		return nil, err
 	}
-	mounted := code == 0
+
 	// what metadata is encoded in any snapshots' zfs properties?
 	// construct metadata where it exists
 	//filesystemMeta := metadata{} // TODO fs-specific metadata
@@ -376,5 +377,6 @@ func discoverSystem(fs string) (*filesystem, error) {
 		mounted:   mounted,
 		snapshots: snapshots,
 	}
+
 	return filesystem, nil
 }

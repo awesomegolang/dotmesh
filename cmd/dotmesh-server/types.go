@@ -2,7 +2,7 @@ package main
 
 import (
 	"fmt"
-	"reflect"
+	"io"
 	"strings"
 	"sync"
 
@@ -78,8 +78,8 @@ type VersionInfo struct {
 type transferFn func(
 	f *fsMachine,
 	fromFilesystemId, fromSnapshotId, toFilesystemId, toSnapshotId string,
-	transferRequestId string, pollResult *TransferPollResult,
-	client *dmclient.JsonRpcClient, transferRequest *TransferRequest,
+	transferRequestId string,
+	client *dmclient.JsonRpcClient, transferRequest *types.TransferRequest,
 ) (*Event, stateFn)
 
 // Defaults are specified in main.go
@@ -111,11 +111,41 @@ type filesystem struct {
 	origin Origin
 }
 
+type TransferUpdateKind int
+
+const (
+	TransferStart TransferUpdateKind = iota
+	TransferGotIds
+	TransferCalculatedSize
+	TransferTotalAndSize
+	TransferProgress
+	TransferIncrementIndex
+	TransferNextS3File
+	TransferSent
+	TransferFinished
+	TransferStatus
+
+	TransferGetCurrentPollResult
+)
+
+type TransferUpdate struct {
+	Kind TransferUpdateKind
+
+	Changes TransferPollResult
+
+	GetResult chan TransferPollResult
+}
+
 // a "filesystem machine" or "filesystem state machine"
 type fsMachine struct {
 	// which ZFS filesystem this statemachine is operating on
 	filesystemId string
 	filesystem   *filesystem
+
+	// channels for uploading and downloading file data
+	fileInputIO  chan *InputFile
+	fileOutputIO chan *OutputFile
+
 	// channel of requests going in to the state machine
 	requests chan *Event
 	// inner versions of the above
@@ -145,75 +175,40 @@ type fsMachine struct {
 	status                  string
 	lastTransitionTimestamp int64
 	transitionObserver      *Observer
-	lastS3TransferRequest   S3TransferRequest
-	lastTransferRequest     TransferRequest
+	lastS3TransferRequest   types.S3TransferRequest
+	lastTransferRequest     types.TransferRequest
 	lastTransferRequestId   string
 	pushCompleted           chan bool
 	dirtyDelta              int64
 	sizeBytes               int64
-	lastPollResult          *TransferPollResult
-}
-
-type S3TransferRequest struct {
-	KeyID           string
-	SecretKey       string
-	Prefixes        []string
-	Endpoint        string
-	Direction       string
-	LocalNamespace  string
-	LocalName       string
-	LocalBranchName string
-	RemoteName      string
-}
-
-func (transferRequest S3TransferRequest) String() string {
-	v := reflect.ValueOf(transferRequest)
-	toString := ""
-	for i := 0; i < v.NumField(); i++ {
-		fieldName := v.Type().Field(i).Name
-		if fieldName == "SecretKey" {
-			toString = toString + fmt.Sprintf(" %v=%v,", fieldName, "****")
-		} else {
-			toString = toString + fmt.Sprintf(" %v=%v,", fieldName, v.Field(i).Interface())
-		}
-	}
-	return toString
-}
-
-type TransferRequest struct {
-	Peer             string // hostname
-	User             string
-	Port             int
-	ApiKey           string //protected value in toString
-	Direction        string // "push" or "pull"
-	LocalNamespace   string
-	LocalName        string
-	LocalBranchName  string
-	RemoteNamespace  string
-	RemoteName       string
-	RemoteBranchName string
-	// TODO could also include SourceSnapshot here
-	TargetCommit string // optional, "" means "latest"
-}
-
-func (transferRequest TransferRequest) String() string {
-	v := reflect.ValueOf(transferRequest)
-	toString := ""
-	for i := 0; i < v.NumField(); i++ {
-		fieldName := v.Type().Field(i).Name
-		if fieldName == "ApiKey" {
-			toString = toString + fmt.Sprintf(" %v=%v,", fieldName, "****")
-		} else {
-			toString = toString + fmt.Sprintf(" %v=%v,", fieldName, v.Field(i).Interface())
-		}
-	}
-	return toString
+	transferUpdates         chan TransferUpdate
+	// only to be accessed via the updateEtcdAboutTransfers goroutine!
+	currentPollResult TransferPollResult
 }
 
 type EventArgs map[string]interface{}
 type Event struct {
 	Name string
 	Args *EventArgs
+}
+
+// InputFile is used to write files to the disk on the local node.
+type InputFile struct {
+	Filename string
+	Contents io.Reader
+	User     string
+	Response chan *Event
+}
+
+// OutputFile is used to read files from the disk on the local node
+// this is always done against a specific, already mounted snapshotId
+// the mount path of the snapshot is passed through via SnapshotMountPath
+type OutputFile struct {
+	Filename          string
+	SnapshotMountPath string
+	Contents          io.Writer
+	User              string
+	Response          chan *Event
 }
 
 func (ea EventArgs) String() string {
