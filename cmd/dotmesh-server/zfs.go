@@ -12,7 +12,6 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
-	"time"
 )
 
 // functions which relate to interacting directly with zfs
@@ -252,6 +251,29 @@ type savedMount struct {
 }
 
 func stashBranch(existingFs string, newFs string, rollbackTo string) error {
+
+	logZFSCommand(existingFs, fmt.Sprintf("%s rename %s %s", ZFS, fq(existingFs), fq(newFs)))
+	err := doSimpleZFSCommand(exec.Command(ZFS, "rename", fq(existingFs), fq(newFs)),
+		fmt.Sprintf("rename filesystem %s (%s) to %s (%s) for retroBranch",
+			existingFs, fq(existingFs),
+			newFs, fq(newFs),
+		),
+	)
+	if err != nil {
+		return err
+	}
+
+	logZFSCommand(existingFs, fmt.Sprintf("%s clone %s@%s %s", ZFS, fq(newFs), rollbackTo, fq(existingFs)))
+	err = doSimpleZFSCommand(exec.Command(ZFS, "clone", fq(newFs)+"@"+rollbackTo, fq(existingFs)),
+		fmt.Sprintf("clone snapshot %s of filesystem %s (%s) to %s (%s) for retroBranch",
+			rollbackTo, newFs, fq(newFs)+"@"+rollbackTo,
+			existingFs, fq(existingFs),
+		),
+	)
+	if err != nil {
+		return err
+	}
+
 	mounts := []savedMount{}
 
 	f, err := os.Open("/proc/self/mountinfo")
@@ -278,6 +300,11 @@ func stashBranch(existingFs string, newFs string, rollbackTo string) error {
 						MountedFS:  mountedFS,
 						Options:    options,
 					})
+					out, err := exec.Command("umount", mountpoint).CombinedOutput()
+					if err != nil {
+						log.Printf("Got an error unmounting %s, msg - %s", mountpoint, out)
+						return err
+					}
 				}
 			}
 		}
@@ -289,39 +316,7 @@ func stashBranch(existingFs string, newFs string, rollbackTo string) error {
 				return err
 			}
 		}
-	}
 
-	log.Printf("ABS TEST: Got mountpoints: %#v, in stashBranch using args existingFs %s, newFs %s, rollbackTo %s\n", mounts, existingFs, newFs, rollbackTo)
-
-	logZFSCommand(existingFs, fmt.Sprintf("%s rename %s %s", ZFS, fq(existingFs), fq(newFs)))
-	err = doSimpleZFSCommand(exec.Command(ZFS, "rename", fq(existingFs), fq(newFs)),
-		fmt.Sprintf("rename filesystem %s (%s) to %s (%s) for retroBranch",
-			existingFs, fq(existingFs),
-			newFs, fq(newFs),
-		),
-	)
-	if err != nil {
-		return err
-	}
-
-	logZFSCommand(existingFs, fmt.Sprintf("%s clone %s@%s %s", ZFS, fq(newFs), rollbackTo, fq(existingFs)))
-	err = doSimpleZFSCommand(exec.Command(ZFS, "clone", fq(newFs)+"@"+rollbackTo, fq(existingFs)),
-		fmt.Sprintf("clone snapshot %s of filesystem %s (%s) to %s (%s) for retroBranch",
-			rollbackTo, newFs, fq(newFs)+"@"+rollbackTo,
-			existingFs, fq(existingFs),
-		),
-	)
-	if err != nil {
-		return err
-	}
-
-	for _, mount := range mounts {
-		out, err := exec.Command("umount", mount.Mountpoint).CombinedOutput()
-		if err != nil {
-			log.Printf("Got an error unmounting %s, msg - %s", mount.Mountpoint, out)
-			time.Sleep(10000 * time.Second)
-			return err
-		}
 	}
 
 	logZFSCommand(existingFs, fmt.Sprintf("%s promote %s", ZFS, fq(existingFs)))
