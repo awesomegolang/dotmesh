@@ -247,6 +247,7 @@ func deleteFilesystemInZFS(fs string) error {
 type savedMount struct {
 	Mountpoint string // Actual filesystem mountpoint
 	MountedFS  string // ZFS pool location we mounted there
+	Options    string
 }
 
 func stashBranch(existingFs string, newFs string, rollbackTo string) error {
@@ -268,11 +269,13 @@ func stashBranch(existingFs string, newFs string, rollbackTo string) error {
 			if len(parts) >= 11 {
 				fsType := parts[8]
 				mountpoint := parts[4]
+				options := parts[5]
 				mountedFS := parts[9]
 				if fsType == "zfs" && strings.HasPrefix(mountpoint, mountPrefix) {
 					mounts = append(mounts, savedMount{
 						Mountpoint: mountpoint,
 						MountedFS:  mountedFS,
+						Options:    options,
 					})
 				}
 			}
@@ -311,6 +314,14 @@ func stashBranch(existingFs string, newFs string, rollbackTo string) error {
 		return err
 	}
 
+	for _, mount := range mounts {
+		out, err := exec.Command("umount", mount.Mountpoint).CombinedOutput()
+		if err != nil {
+			log.Printf("Got an error unmounting %s, msg - %s", mount.Mountpoint, out)
+			return err
+		}
+	}
+
 	logZFSCommand(existingFs, fmt.Sprintf("%s promote %s", ZFS, fq(existingFs)))
 	err = doSimpleZFSCommand(exec.Command(ZFS, "promote", fq(existingFs)),
 		fmt.Sprintf("promote filesystem %s (%s) for retroBranch",
@@ -319,6 +330,14 @@ func stashBranch(existingFs string, newFs string, rollbackTo string) error {
 	)
 	if err != nil {
 		return err
+	}
+	for _, mount := range mounts {
+		err := doSimpleZFSCommand(exec.Command(MOUNT_ZFS, "-o", mount.Options,
+			mount.MountedFS, mount.Mountpoint),
+			fmt.Sprintf("re-mounting filesystems we tampered with - filesystem %s mountpoint %s options %s", mount.MountedFS, mount.Mountpoint, mount.Options))
+		if err != nil {
+			return err
+		}
 	}
 
 	return nil
