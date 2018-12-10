@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // functions which relate to interacting directly with zfs
@@ -290,7 +291,7 @@ func stashBranch(existingFs string, newFs string, rollbackTo string) error {
 		}
 	}
 
-	log.Printf("ABS TEST: Got mountpoints: %#v\n", mounts)
+	log.Printf("ABS TEST: Got mountpoints: %#v, in stashBranch using args existingFs %s, newFs %s, rollbackTo %s\n", mounts, existingFs, newFs, rollbackTo)
 
 	logZFSCommand(existingFs, fmt.Sprintf("%s rename %s %s", ZFS, fq(existingFs), fq(newFs)))
 	err = doSimpleZFSCommand(exec.Command(ZFS, "rename", fq(existingFs), fq(newFs)),
@@ -318,6 +319,7 @@ func stashBranch(existingFs string, newFs string, rollbackTo string) error {
 		out, err := exec.Command("umount", mount.Mountpoint).CombinedOutput()
 		if err != nil {
 			log.Printf("Got an error unmounting %s, msg - %s", mount.Mountpoint, out)
+			time.Sleep(10000 * time.Second)
 			return err
 		}
 	}
